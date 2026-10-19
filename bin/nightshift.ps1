@@ -24,7 +24,8 @@ param(
 $WatchTask = 'nightshift watch'
 $HookMark = 'nightshift pre-push hook'
 
-function Fail($message) { Write-Output "nightshift: $message"; exit 1 }
+# Write-Host, not Write-Output: callers pipe some functions to Out-Null, which would swallow it.
+function Fail($message) { Write-Host "nightshift: $message"; exit 1 }
 function Find-Repo($name) {
   $entry = Get-NsRepos | Where-Object name -eq $name | Select-Object -First 1
   if (-not $entry) { Fail "$name isn't registered." }
