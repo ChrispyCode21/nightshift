@@ -5,6 +5,7 @@ import {
   isDue,
   isMajorBump,
   isOpenBlocker,
+  isPeak,
   isReviewable,
   pickMilestone,
   riskOf,
@@ -149,4 +150,12 @@ test('riskOf: high risk from paths, labels or a major bump', () => {
   assert.equal(riskOf({ ...base, labels: ['touches-data'] }, highRisk).highRisk, true)
   const major = riskOf({ ...base, author: 'app/dependabot', title: 'Bump x from 1.0.0 to 2.0.0' }, highRisk)
   assert.deepEqual(major, { kind: 'dependabot-major', highRisk: true, touchesWorkflows: false })
+})
+
+test('isPeak: 5–11 AM Pacific, across daylight saving', () => {
+  assert.equal(isPeak(new Date('2026-10-19T12:00:00Z')), true) // 5:00 AM PDT
+  assert.equal(isPeak(new Date('2026-10-19T17:59:00Z')), true) // 10:59 AM PDT
+  assert.equal(isPeak(new Date('2026-10-19T18:00:00Z')), false) // 11:00 AM PDT
+  assert.equal(isPeak(new Date('2026-12-01T12:00:00Z')), false) // 4:00 AM PST
+  assert.equal(isPeak(new Date('2026-12-01T13:00:00Z')), true) // 5:00 AM PST
 })
