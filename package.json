@@ -1,0 +1,14 @@
+{
+  "name": "nightshift",
+  "private": true,
+  "type": "module",
+  "description": "Off-peak builder and reviewer agents for any opted-in repo, as a Claude Code plugin.",
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "devDependencies": {
+    "prettier": "^3.9.10"
+  }
+}
