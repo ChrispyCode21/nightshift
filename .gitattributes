@@ -1,0 +1,2 @@
+# LF everywhere, including Windows checkouts, so Prettier agrees with CI and hooks run in sh.
+* text=auto eol=lf
