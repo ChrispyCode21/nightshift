@@ -1,0 +1,15 @@
+# Weekly update PRs for npm packages and the SHA-pinned GitHub Actions. Each PR runs the CI gates.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      codeql:
+        patterns:
+          - github/codeql-action/*
