@@ -1,0 +1,12 @@
+{
+  "name": "nightshift",
+  "owner": { "name": "ChrispyCode21" },
+  "metadata": { "description": "nightshift: off-peak agent pipeline as a Claude Code plugin." },
+  "plugins": [
+    {
+      "name": "nightshift",
+      "source": "./",
+      "description": "Off-peak builder and reviewer agents for any opted-in repo."
+    }
+  ]
+}
