@@ -1,0 +1,25 @@
+#!/bin/sh
+# nightshift pre-push hook, installed by `nightshift.ps1 register` (which fills in the paths below).
+# When the owner pushes to a branch, the trigger checks whether it's the builder's or Dependabot's
+# and, once the push lands, makes its PR due and starts the reviewer. Never blocks the push.
+
+launcher='__LAUNCHER__'
+reviewer='__REVIEWER__'
+builder='__BUILDER__'
+
+# The agents' own pushes don't trigger anything: from a triggered run, or from their checkouts.
+[ -n "$NIGHTSHIFT_AGENT" ] && exit 0
+[ -f "$launcher" ] || exit 0
+top=$(git rev-parse --show-toplevel)
+case "$top" in "$reviewer"* | "$builder"*) exit 0 ;; esac
+
+github=$(git remote get-url "$1" 2>/dev/null | sed -E 's#.*github\.com[:/]##; s#\.git$##')
+zero=0000000000000000000000000000000000000000
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue # a deleted branch
+  case "$remote_ref" in refs/heads/*) ;; *) continue ;; esac
+  branch=${remote_ref#refs/heads/}
+  # Start-Process detaches it, so the push finishes now and the trigger waits for it to land.
+  powershell.exe -NoProfile -Command "Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','$launcher','trigger.ps1','-Agent','review','-Github','$github','-Branch','$branch','-Sha','$local_sha'" >/dev/null 2>&1
+done
+exit 0
