@@ -1,0 +1,23 @@
+{
+  "checks": { "fast": null, "e2e": null, "install": null },
+  "builder": {
+    "milestones": "semver",
+    "authors": "owner",
+    "branchPrefix": "agent/issue-",
+    "skipLabels": ["agent-needs-info", "agent-followup", "question"],
+    "docs": ["README.md", "CLAUDE.md"],
+    "spec": null,
+    "workedExamples": null,
+    "neverEdit": [".github/workflows/", ".github/rulesets/", ".claude/"],
+    "release": null
+  },
+  "reviewer": {
+    "authors": ["agent", "app/dependabot"],
+    "projectReviewer": null,
+    "highRisk": { "paths": [], "labels": [] },
+    "ownerMerges": { "labels": [], "release": true, "dependabotWorkflows": true },
+    "mergeNotes": {},
+    "mergeMethod": "merge"
+  },
+  "standards": { "baseline": true, "rules": [], "checker": null, "exceptions": [] }
+}
