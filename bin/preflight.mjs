@@ -1,0 +1,202 @@
+// Tier 0 (DESIGN.md, "How it runs"): decides with no model whether a registered repo has work for
+// the builder or reviewer, so a run with nothing to do costs no tokens. The rules are in
+// lib/gates.mjs; this file reads GitHub and the repo's config.
+//
+//   node preflight.mjs repos                                  the repos the agents may work on
+//   node preflight.mjs build|review --repo <name> [--claim | --ignore-lock]
+//   node preflight.mjs release build|review --repo <name>     drop that run's lock
+//
+// Prints one JSON object (with the repo's resolved config when there's work). Exit 0: there's work
+// (`status: "work"`); 10: nothing to do (`status: "idle"`, with `reason`); 1: it failed.
+// --claim takes a lock for that repo and agent when there's work, so a scheduled run and a
+// triggered one never overlap; --ignore-lock is for the run holding it, to check again.
+import { execFileSync } from 'node:child_process'
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { CONFIG_PATH, home, loadRegistry, resolveRepo } from './lib/config.mjs'
+import { buildCandidates, isDue, isOpenBlocker, isReviewable, pickMilestone, riskOf } from './lib/gates.mjs'
+
+const LOCK_HOURS = 4
+// Git reports "dubious ownership" for checkouts on drives that don't record owners (exFAT).
+const env = {
+  ...process.env,
+  GIT_CONFIG_COUNT: '1',
+  GIT_CONFIG_KEY_0: 'safe.directory',
+  GIT_CONFIG_VALUE_0: '*',
+}
+
+const run = (cmd, args, cwd) =>
+  execFileSync(cmd, args, { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+const idle = (reason, extra = {}) => ({ status: 'idle', reason, ...extra })
+
+function github(repo) {
+  const json = (args) => JSON.parse(run('gh', args) || 'null')
+  return {
+    json,
+    api: (path) => json(['api', `repos/${repo}/${path}`]),
+    prs: (fields) => json(['pr', 'list', '-R', repo, '--state', 'open', '--limit', '200', '--json', fields]),
+    me: () => run('gh', ['api', 'user', '--jq', '.login']),
+    succeeds: (args) => {
+      try {
+        run('gh', args)
+        return true
+      } catch {
+        return false
+      }
+    },
+  }
+}
+
+const lockPath = (name, agent) => join(home(), 'locks', `${name}-${agent}.lock`)
+
+// Who holds the lock, or null. One file handle for the age and the text, so they agree.
+function lockHolder(path) {
+  let fd
+  try {
+    fd = openSync(path, 'r')
+  } catch {
+    return null
+  }
+  try {
+    const ageHours = (Date.now() - fstatSync(fd).mtimeMs) / 3_600_000
+    return ageHours < LOCK_HOURS ? readFileSync(fd, 'utf8').trim() : null
+  } finally {
+    closeSync(fd)
+  }
+}
+
+function claim(path) {
+  mkdirSync(join(home(), 'locks'), { recursive: true })
+  rmSync(path, { force: true }) // stale, or this run's own (--ignore-lock)
+  writeFileSync(path, `pid ${process.pid}, since ${new Date().toISOString()}`, { flag: 'wx' }) // fails on a race
+}
+
+function build({ entry, config }) {
+  const gh = github(entry.github)
+  const { branchPrefix, milestones: mode, skipLabels, release } = config.builder
+  const prs = gh.prs('number,headRefName,closingIssuesReferences')
+  const open = prs.find((p) => p.headRefName.startsWith(branchPrefix))
+  if (open) return idle(`Build PR #${open.number} still open.`)
+
+  const milestone = pickMilestone(gh.api('milestones?state=open&per_page=100'), mode)
+  if (mode !== 'none' && !milestone) return idle('No milestone to build from.')
+  const query = milestone ? `milestone=${milestone.number}` : 'labels=nightshift'
+  const issues = gh.api(`issues?${query}&state=open&per_page=100`).filter((i) => !i.pull_request)
+
+  if (issues.length === 0) {
+    if (!release || !milestone || mode !== 'semver')
+      return idle(`Nothing open in ${milestone?.title ?? 'nightshift issues'}.`)
+    const title = `Release ${milestone.title}`
+    const hasIssue = gh
+      .api(`issues?milestone=${milestone.number}&state=all&per_page=100`)
+      .some((i) => i.title === title)
+    if (hasIssue || gh.succeeds(['release', 'view', milestone.title, '-R', entry.github]))
+      return idle(`Milestone ${milestone.title} has nothing open and its release is under way.`)
+    return { status: 'work', milestone: milestone.title, release: true, candidates: [], waiting: [] }
+  }
+
+  // Through the registered checkout, so private repos use its remote and credentials.
+  const branches = run('git', ['ls-remote', '--heads', 'origin', `${branchPrefix}*`], entry.checkout)
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => line.split('refs/heads/')[1])
+  const { candidates, waiting } = buildCandidates({
+    issues,
+    me: gh.me(),
+    skipLabels,
+    closing: new Set(prs.flatMap((p) => p.closingIssuesReferences.map((r) => r.number))),
+    branches,
+    branchPrefix,
+    openSubIssues: (n) => gh.api(`issues/${n}/sub_issues?per_page=100`).some((s) => s.state === 'open'),
+    openBlockers: (n) =>
+      gh
+        .api(`issues/${n}/dependencies/blocked_by?per_page=100`)
+        .filter(isOpenBlocker)
+        .map((b) => b.number),
+  })
+  const where = milestone?.title ?? 'nightshift issues'
+  if (candidates.length === 0) return idle(`Nothing to build in ${where}.`, { waiting })
+  return { status: 'work', milestone: milestone?.title ?? null, release: false, candidates, waiting }
+}
+
+function review({ entry, config }) {
+  const gh = github(entry.github)
+  const me = gh.me()
+  const { authors, highRisk } = config.reviewer
+  const branchPrefix = config.builder.branchPrefix
+  const prs = gh
+    .prs('number,title,body,author,headRefName,isDraft,isCrossRepository,labels')
+    .filter((p) => isReviewable(p, { me, branchPrefix, authors }))
+    .sort((a, b) => a.number - b.number)
+
+  const due = []
+  for (const pr of prs) {
+    const labels = pr.labels.map((l) => l.name)
+    if (labels.includes('reviewed')) {
+      const events = gh.api(`issues/${pr.number}/events?per_page=100`)
+      const labeledAt = events
+        .filter((e) => e.event === 'labeled' && e.label?.name === 'reviewed')
+        .at(-1)?.created_at
+      const { commits } = gh.json(['pr', 'view', String(pr.number), '-R', entry.github, '--json', 'commits'])
+      if (!isDue({ labels, labeledAt, commits, me })) continue
+    }
+    const { files } = gh.json(['pr', 'view', String(pr.number), '-R', entry.github, '--json', 'files'])
+    const risk = riskOf(
+      { author: pr.author.login, title: pr.title, body: pr.body, labels, paths: files.map((f) => f.path) },
+      highRisk,
+    )
+    due.push({ number: pr.number, title: pr.title, branch: pr.headRefName, ...risk })
+  }
+  if (due.length === 0) return idle('No PRs due.')
+  return { status: 'work', prs: due }
+}
+
+function repos() {
+  const list = loadRegistry().repos.map((entry) => {
+    try {
+      resolveRepo(entry.name)
+      return { name: entry.name, github: entry.github, ready: true }
+    } catch (error) {
+      return { name: entry.name, github: entry.github, ready: false, reason: error.message }
+    }
+  })
+  return {
+    status: list.some((r) => r.ready) ? 'work' : 'idle',
+    reason: `${CONFIG_PATH} + registry`,
+    repos: list,
+  }
+}
+
+const args = process.argv.slice(2)
+const flag = (name) => args.includes(name)
+const option = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined)
+let result
+try {
+  const [mode, agent] = args
+  if (mode === 'repos') result = repos()
+  else if (mode === 'release') {
+    if (!['build', 'review'].includes(agent) || !option('--repo'))
+      throw new Error('Usage: release build|review --repo <name>')
+    rmSync(lockPath(option('--repo'), agent), { force: true })
+    process.exit(0)
+  } else if (mode === 'build' || mode === 'review') {
+    const name = option('--repo')
+    if (!name) throw new Error(`Usage: ${mode} --repo <name> [--claim | --ignore-lock]`)
+    const repo = resolveRepo(name)
+    const path = lockPath(name, mode)
+    const holder = !flag('--ignore-lock') && lockHolder(path)
+    if (holder) result = idle(`Another ${mode} run on ${name} is in progress (${holder}).`)
+    else result = mode === 'build' ? build(repo) : review(repo)
+    if (result.status === 'work') {
+      if (flag('--claim')) claim(path)
+      result = { ...result, repo: { ...repo.entry }, config: repo.config }
+    }
+  } else
+    throw new Error(
+      'Usage: preflight.mjs repos | build|review --repo <name> | release build|review --repo <name>',
+    )
+} catch (error) {
+  result = { status: 'error', reason: String(error.stderr || error.message).trim() }
+}
+console.log(JSON.stringify(result, null, 2))
+process.exit({ work: 0, idle: 10 }[result.status] ?? 1)

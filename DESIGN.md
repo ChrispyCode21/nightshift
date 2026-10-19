@@ -34,7 +34,7 @@ The same mechanics Logtelligent uses now (its PIPELINE.md, "Tiers" and "Triggers
 Two keys, both required:
 
 1. **`.claude/nightshift.json` in the repo**, committed. Says *how* the agents work there. Reviewed like any code.
-2. **A registry entry on this machine** (`%USERPROFILE%\.nightshift\repos.json`). Says *that* they run there, and where.
+2. **A registry entry on this machine** (`%USERPROFILE%\.nightshift\repos.json`). Says *that* they run there, and where. Not AppData: the Claude desktop app is a packaged app whose processes see a private copy of AppData, so its scheduled runs and Task Scheduler's runs wouldn't share the registry, locks or logs there.
 
 ```json
 {
@@ -188,7 +188,9 @@ nightshift/
     finding-judge.md       Tier 2 (Opus) for the reviewer
     code-reviewer.md       the generic Tier 1 compliance reviewer
   bin/
-    preflight.mjs          Tier 0, reads the registry and config
+    preflight.mjs          Tier 0: reads GitHub, the registry and the repo's config
+    lib/gates.mjs          Tier 0's rules as pure functions, unit-tested
+    lib/config.mjs         the registry, the config and its defaults
     check.mjs              the baseline's script rules
     trigger.ps1            lock, refresh, gate, run or defer
     nightshift.ps1         register, unregister, trigger, status
@@ -212,6 +214,6 @@ Installed once with `claude plugin marketplace add ChrispyCode21/nightshift`, th
 
 - ✅ The plugin validates (`claude plugin validate .`) and installs from GitHub: `claude plugin marketplace add ChrispyCode21/nightshift` (add `#<branch>` to try a branch), then `claude plugin install nightshift@nightshift`. The private repo clones over SSH with your git credentials.
 - ✅ `claude -p "/nightshift:ping"` runs the plugin skill headless from another repo, and the skill finds `bin/` through `${CLAUDE_PLUGIN_ROOT}`.
-- ⏳ A desktop scheduled task can run a plugin skill (`/nightshift:build-next-issue`) as its prompt, in a session whose folder is the repo.
+- ✅ A desktop scheduled task runs a plugin skill given as its prompt (`/nightshift:ping`), and the skill runs the plugin's scripts.
 
 Found along the way: a local folder can't be a marketplace on an exFAT drive like `D:` (no file owners to check, the same reason git reports "dubious ownership" there), so development installs come from GitHub branches too.
