@@ -6,6 +6,9 @@
 $installed = Join-Path $env:USERPROFILE '.claude\plugins\installed_plugins.json'
 $entry = (Get-Content $installed -Raw | ConvertFrom-Json).plugins.'nightshift@nightshift' | Select-Object -First 1
 if (-not $entry) { Write-Error 'The nightshift plugin is not installed.'; exit 1 }
-$script, $rest = $args
+$script = $args[0]
+# Always an array: one leftover argument would otherwise be a string, and @ splats a string one
+# character at a time.
+$rest = @($args | Select-Object -Skip 1)
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $entry.installPath "bin\$script") @rest
 exit $LASTEXITCODE
