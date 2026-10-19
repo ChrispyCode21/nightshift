@@ -1,6 +1,20 @@
 // Tier 0's decisions, as pure functions over data preflight.mjs fetched from GitHub. No I/O here,
 // so every rule is unit-tested (test/gates.test.mjs).
 
+// Anthropic's peak hours, in Pacific time. Runs that reach a repo during them stop for the day.
+export const PEAK = { start: 5, end: 11 }
+
+export function isPeak(date = new Date()) {
+  const hour = Number(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles',
+      hour: 'numeric',
+      hourCycle: 'h23',
+    }).format(date),
+  )
+  return hour >= PEAK.start && hour < PEAK.end
+}
+
 export function semver(title) {
   const m = /^v(\d+)\.(\d+)\.(\d+)$/.exec(title)
   return m && m.slice(1).map(Number)

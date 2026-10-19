@@ -3,6 +3,7 @@
 // lib/gates.mjs; this file reads GitHub and the repo's config.
 //
 //   node preflight.mjs repos                                  the repos the agents may work on
+//   node preflight.mjs peak                                   exit 10 during peak hours
 //   node preflight.mjs build|review --repo <name> [--claim | --ignore-lock]
 //   node preflight.mjs release build|review --repo <name>     drop that run's lock
 //
@@ -14,7 +15,15 @@ import { execFileSync } from 'node:child_process'
 import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CONFIG_PATH, home, loadRegistry, resolveRepo } from './lib/config.mjs'
-import { buildCandidates, isDue, isOpenBlocker, isReviewable, pickMilestone, riskOf } from './lib/gates.mjs'
+import {
+  buildCandidates,
+  isDue,
+  isOpenBlocker,
+  isPeak,
+  isReviewable,
+  pickMilestone,
+  riskOf,
+} from './lib/gates.mjs'
 
 const LOCK_HOURS = 4
 // Git reports "dubious ownership" for checkouts on drives that don't record owners (exFAT).
@@ -174,6 +183,8 @@ let result
 try {
   const [mode, agent] = args
   if (mode === 'repos') result = repos()
+  else if (mode === 'peak')
+    result = isPeak() ? idle('Peak hours (5–11 AM Pacific).') : { status: 'work', reason: 'Off-peak.' }
   else if (mode === 'release') {
     if (!['build', 'review'].includes(agent) || !option('--repo'))
       throw new Error('Usage: release build|review --repo <name>')
@@ -193,7 +204,7 @@ try {
     }
   } else
     throw new Error(
-      'Usage: preflight.mjs repos | build|review --repo <name> | release build|review --repo <name>',
+      'Usage: preflight.mjs repos | peak | build|review --repo <name> | release build|review --repo <name>',
     )
 } catch (error) {
   result = { status: 'error', reason: String(error.stderr || error.message).trim() }

@@ -1,6 +1,6 @@
 {
   "name": "nightshift",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Off-peak builder and reviewer agents for any opted-in repo.",
   "author": { "name": "ChrispyCode21" }
 }
