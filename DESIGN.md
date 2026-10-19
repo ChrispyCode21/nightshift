@@ -199,7 +199,7 @@ nightshift/
     nightshift.json        the defaults above
 ```
 
-Installed once with `/plugin marketplace add ChrispyCode21/nightshift`, then `/plugin install nightshift`. Skills are namespaced (`/nightshift:build-next-issue`); scripts are found through the plugin's install path, so nothing is copied into each repo except its config.
+Installed once with `claude plugin marketplace add ChrispyCode21/nightshift`, then `claude plugin install nightshift@nightshift`. Skills are namespaced (`/nightshift:build-next-issue`); scripts are found through the plugin's install path, so nothing is copied into each repo except its config.
 
 ## Moving Logtelligent over
 
@@ -210,6 +210,8 @@ Installed once with `/plugin marketplace add ChrispyCode21/nightshift`, then `/p
 
 ## To verify before building
 
-- ✅ The plugin validates (`claude plugin validate .`) and installs from a local marketplace: `claude plugin marketplace add ./nightshift` (a relative path; an absolute Windows path is rejected), then `claude plugin install nightshift@nightshift`.
-- ⏳ `claude -p "/nightshift:ping"` runs the plugin skill headless and finds `bin/` through `${CLAUDE_PLUGIN_ROOT}`. Blocked: the CLI's login had expired (401), which also breaks the triggers' headless runs until `claude` is signed in again.
+- ✅ The plugin validates (`claude plugin validate .`) and installs from GitHub: `claude plugin marketplace add ChrispyCode21/nightshift` (add `#<branch>` to try a branch), then `claude plugin install nightshift@nightshift`. The private repo clones over SSH with your git credentials.
+- ✅ `claude -p "/nightshift:ping"` runs the plugin skill headless from another repo, and the skill finds `bin/` through `${CLAUDE_PLUGIN_ROOT}`.
 - ⏳ A desktop scheduled task can run a plugin skill (`/nightshift:build-next-issue`) as its prompt, in a session whose folder is the repo.
+
+Found along the way: a local folder can't be a marketplace on an exFAT drive like `D:` (no file owners to check, the same reason git reports "dubious ownership" there), so development installs come from GitHub branches too.
