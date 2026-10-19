@@ -22,12 +22,15 @@ export function merge(base, over) {
   return out
 }
 
-export const defaults = () => JSON.parse(readFileSync(DEFAULTS, 'utf8'))
+// JSON written on Windows may start with a byte-order mark, which JSON.parse rejects.
+export const readJson = (path) => JSON.parse(readFileSync(path, 'utf8').replace(/^﻿/, ''))
+
+export const defaults = () => readJson(DEFAULTS)
 
 export function loadRegistry() {
   const path = join(home(), 'repos.json')
   if (!existsSync(path)) return { repos: [] }
-  return JSON.parse(readFileSync(path, 'utf8'))
+  return readJson(path)
 }
 
 // A repo the agents may work on: registered, enabled, and carrying its config file.
@@ -37,5 +40,5 @@ export function resolveRepo(name) {
   if (entry.enabled === false) throw new Error(`${name} is registered but disabled.`)
   const path = join(entry.checkout, CONFIG_PATH)
   if (!existsSync(path)) throw new Error(`${name} has no ${CONFIG_PATH}, so it isn't opted in.`)
-  return { entry, config: merge(defaults(), JSON.parse(readFileSync(path, 'utf8'))) }
+  return { entry, config: merge(defaults(), readJson(path)) }
 }

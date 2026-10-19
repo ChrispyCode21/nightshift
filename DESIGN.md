@@ -51,7 +51,7 @@ Two keys, both required:
 }
 ```
 
-`nightshift register <checkout>` reads the repo's config (refusing if there's none), creates the builder's clone and the reviewer's worktree, installs the pre-push hook, and adds the entry. `unregister` removes the hook and the entry and leaves the checkouts. `enabled: false` pauses a repo without touching its code.
+`nightshift register <checkout>` reads the repo's config (refusing if there's none), creates the builder's clone and the reviewer's worktree, installs the pre-push hook (in the repo's `.git/hooks`; a repo that sets `core.hooksPath`, or already has a pre-push hook, calls the launcher from its own instead), and adds the entry. Hooks and scheduled tasks call `run.ps1` in the nightshift home, which finds the plugin's current install folder, so they survive plugin updates. `unregister` removes the hook and the entry and leaves the checkouts. `enabled: false` pauses a repo without touching its code.
 
 A clone or fork that already has the config file runs nothing until it's registered.
 
@@ -193,8 +193,10 @@ nightshift/
     lib/config.mjs         the registry, the config and its defaults
     check.mjs              the baseline's script rules
     trigger.ps1            lock, refresh, gate, run or defer
-    nightshift.ps1         register, unregister, trigger, status
-    hooks/pre-push
+    nightshift.ps1         register, unregister, enable, disable, status, trigger, watch
+    run.ps1                the launcher, copied to the nightshift home
+    lib/common.ps1         the scripts' shared helpers
+    hooks/pre-push         the hook template register fills in
   schema/
     nightshift.schema.json the config's JSON Schema
   defaults/
