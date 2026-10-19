@@ -125,17 +125,48 @@ An **exception** (`standards.exceptions`) says a deviation is deliberate, with a
 
 ### The baseline
 
-A draft; yours to edit before it's built.
+Rules that pay for themselves: each catches a mistake that's common in agent-written code, costly to find later, and cheap to check. "Lint" means the repo's linter where it has the rule, otherwise `nightshift check`.
+
+**UI**
 
 | Rule | Checked by |
 |---|---|
 | `no-inline-components`: components are defined at module level, never inside another component's body | script (AST) |
 | `no-inline-styles`: no `style={{…}}` or `style="…"` for anything a class or token can express | script |
-| `tokens-only`: colors, spacing, radii, font sizes and shadows come from design tokens, not raw values | script, given the repo's token file |
+| `tokens-only`: colors, spacing, radii, font sizes, shadows and z-indexes come from design tokens, not raw values | script, given the repo's token file |
 | `use-primitives`: where the repo has a shared component (button, field, card), raw elements with the same role aren't used | script, given the repo's primitives |
+| `accessible-by-default`: interactive elements are real controls (`<button>`, `<a href>`, inputs) with accessible names; images have `alt`; nothing is clickable without being focusable | lint (jsx-a11y rules) |
+| `respects-preferences`: motion honors `prefers-reduced-motion`, colors work in light and dark, and text pairs meet WCAG AA contrast | review, plus a contrast check on the token file |
+| `fits-small-screens`: no fixed widths or sideways scrolling at 320px | review, or the repo's layout tests |
+
+**Code**
+
+| Rule | Checked by |
+|---|---|
 | `one-formatter`: dates, numbers and units are formatted through shared helpers | review |
 | `pure-core`: domain logic has no UI, storage or I/O imports | review, plus a lint rule where the repo has one |
-| `tests-with-logic`: new logic arrives with unit tests | review |
+| `strict-types`: TypeScript `strict` on; no `any`, no unexplained `!`, and `@ts-expect-error` with a reason instead of `@ts-ignore` | lint |
+| `no-floating-promises`: every promise is awaited, returned or explicitly handled | lint (type-aware) |
+| `no-swallowed-errors`: no empty `catch`, and no `catch` that only logs where the caller needed to know | script, then review |
+| `no-debug-leftovers`: no `console.log`, `debugger`, commented-out code or `.only` in tests | script |
+| `no-dead-code`: no unused exports, files or dependencies | script (a knip-style pass) |
+| `named-constants`: domain numbers (limits, rates, thresholds) are named constants, not literals in logic | review |
+
+**Data**
+
+| Rule | Checked by |
+|---|---|
+| `validate-at-boundaries`: data from the network, storage, files or the URL is parsed and checked where it enters, and typed only after that | review |
+| `migrate-stored-data`: changing the shape of stored data comes with a versioned migration and a test that upgrades old data | review |
+| `no-secrets`: no keys, tokens or credentialed URLs in code, config or fixtures | script (pattern scan) |
+
+**Tests and dependencies**
+
+| Rule | Checked by |
+|---|---|
+| `tests-with-logic`: new logic arrives with unit tests, and a fixed bug with a test that would have caught it | review |
+| `deterministic-tests`: unit tests control time, randomness and the network instead of using the real ones | review, plus a script for `Date.now()`, `Math.random()` and `fetch` in tests without a fake |
+| `earn-each-dependency`: no new dependency for what the platform or an existing one already does; versions pinned by the lockfile | review, plus a script for lockfile drift |
 
 Rules a script can check ship as `nightshift check`, a generic version of Logtelligent's `check-conventions.mjs` configured by the repo (token file, primitives, exceptions). Scripts are reliable where prompts aren't: the review tiers handle only the rules marked "review".
 
