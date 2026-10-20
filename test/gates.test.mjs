@@ -7,8 +7,10 @@ import {
   isOpenBlocker,
   isPeak,
   isReviewable,
+  overUsage,
   pickMilestone,
   riskOf,
+  usageFromStream,
 } from '../bin/lib/gates.mjs'
 
 test('pickMilestone: semver takes the lowest version and ignores other titles', () => {
@@ -158,4 +160,42 @@ test('isPeak: 5–11 AM Pacific, across daylight saving', () => {
   assert.equal(isPeak(new Date('2026-10-19T18:00:00Z')), false) // 11:00 AM PDT
   assert.equal(isPeak(new Date('2026-12-01T12:00:00Z')), false) // 4:00 AM PST
   assert.equal(isPeak(new Date('2026-12-01T13:00:00Z')), true) // 5:00 AM PST
+})
+
+const rateLimitLine = (status, fiveHour, sevenDay) =>
+  JSON.stringify({
+    type: 'rate_limit_event',
+    rate_limit_info: {
+      status,
+      unifiedWindows: {
+        five_hour: { utilization: fiveHour, resetsAt: 1792517400 },
+        seven_day: { utilization: sevenDay, resetsAt: 1792573200 },
+      },
+    },
+  })
+
+test('usageFromStream: takes the last rate_limit_event and skips other lines', () => {
+  const text = [
+    '{"type":"system","subtype":"init"}',
+    rateLimitLine('allowed', 0.4, 0.5),
+    'not json',
+    rateLimitLine('allowed_warning', 0.5, 0.87),
+    '{"type":"result"}',
+  ].join('\n')
+  const usage = usageFromStream(text)
+  assert.equal(usage.five_hour.utilization, 0.5)
+  assert.equal(usage.seven_day.utilization, 0.87)
+  assert.equal(usage.rejected, false)
+  assert.equal(usageFromStream('{"type":"result"}'), null)
+  assert.equal(usageFromStream(rateLimitLine('rejected', 1, 0.9)).rejected, true)
+})
+
+test('overUsage: a window at or past its limit counts; one below does not', () => {
+  const windows = (fiveHour, sevenDay) => usageFromStream(rateLimitLine('allowed', fiveHour, sevenDay))
+  assert.deepEqual(overUsage(windows(0.5, 0.87)), [])
+  assert.deepEqual(overUsage(windows(0.85, 0.2)).length, 1)
+  assert.match(overUsage(windows(0.85, 0.2))[0], /^five_hour 85% \(resets /)
+  assert.match(overUsage(windows(0.1, 0.9))[0], /^seven_day 90%/)
+  assert.equal(overUsage(windows(0.9, 0.95)).length, 2)
+  assert.deepEqual(overUsage({ rejected: false }), []) // a window missing from the event
 })

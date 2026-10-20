@@ -7,6 +7,7 @@ nightshift runs two agents on any repo you opt in: a **builder** that turns a mi
 - **Any repo, opt-in only.** Agents run only where the repo has a config file *and* you registered its checkout on this machine.
 - **Your plan, not API credit.** Desktop scheduled tasks and `claude -p` on your login. No GitHub Actions, no API keys.
 - **Off-peak.** Nightly runs, and triggered runs deferred past Anthropic's peak hours (5–11 AM Pacific).
+- **Your usage first.** No run starts once the plan's 5-hour window is at 85% or its weekly window at 90%.
 - **Cheap when idle.** Tier 0 is a script; a night with nothing to do costs no tokens.
 - **Each repo's standards win for what the agent writes; your baseline is reported, not imposed** ("Standards").
 
@@ -25,9 +26,9 @@ The same mechanics Logtelligent uses now (its PIPELINE.md, "Tiers" and "Triggers
 | 2: advise | Opus | reviews a build plan against `issue.md` only | decides each finding from `review.md`, the diff and `issue.md` only |
 | 3: execute | Sonnet | builds the approved plan, runs the checks | makes the fixes, runs the checks |
 
-**Schedule.** Two desktop scheduled tasks: builder at 2:00 AM, reviewer at 4:00 AM Central. Each loops over the registry, one repo at a time, at most one build per repo per night. Before starting each repo it checks the clock, and a repo it reaches during peak hours waits for the deferred run.
+**Schedule.** Two desktop scheduled tasks: builder at 2:00 AM, reviewer at 4:00 AM Central. Each loops over the registry, one repo at a time, at most one build per repo per night. Before starting each repo it checks the clock and the plan's usage: a repo it reaches during peak hours waits for the deferred run, and one it reaches with usage near the limits (`USAGE_LIMITS` in `gates.mjs`) waits for the next run. `preflight.mjs usage` reads the usage from one tiny headless Haiku run, the only place Claude Code reports it outside its interactive status line.
 
-**Triggers.** One watcher (a Windows scheduled task, every 30 minutes) runs Tier 0 for every registered repo; a pre-push hook in each registered checkout starts the reviewer when you push to an agent or Dependabot branch; `nightshift trigger <repo> build|review` by hand. All go through `trigger.ps1`: lock check, refresh, Tier 0, then run headless or defer past peak.
+**Triggers.** One watcher (a Windows scheduled task, every 30 minutes) runs Tier 0 for every registered repo; a pre-push hook in each registered checkout starts the reviewer when you push to an agent or Dependabot branch; `nightshift trigger <repo> build|review` by hand. All go through `trigger.ps1`: lock check, refresh, Tier 0, then run headless or defer past peak, unless usage is near the limits. The Windows scheduled tasks run under `conhost.exe --headless`, so they never open a window.
 
 ## Opting a repo in
 

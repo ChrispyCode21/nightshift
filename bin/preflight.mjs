@@ -4,6 +4,7 @@
 //
 //   node preflight.mjs repos                                  the repos the agents may work on
 //   node preflight.mjs peak                                   exit 10 during peak hours
+//   node preflight.mjs usage                                  exit 10 when plan usage is near its limits
 //   node preflight.mjs build|review --repo <name> [--claim | --ignore-lock]
 //   node preflight.mjs release build|review --repo <name>     drop that run's lock
 //
@@ -11,7 +12,7 @@
 // (`status: "work"`); 10: nothing to do (`status: "idle"`, with `reason`); 1: it failed.
 // --claim takes a lock for that repo and agent when there's work, so a scheduled run and a
 // triggered one never overlap; --ignore-lock is for the run holding it, to check again.
-import { execFileSync } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CONFIG_PATH, home, loadRegistry, resolveRepo } from './lib/config.mjs'
@@ -21,8 +22,11 @@ import {
   isOpenBlocker,
   isPeak,
   isReviewable,
+  overUsage,
   pickMilestone,
   riskOf,
+  USAGE_LIMITS,
+  usageFromStream,
 } from './lib/gates.mjs'
 
 const LOCK_HOURS = 4
@@ -160,6 +164,34 @@ function review({ entry, config }) {
   return { status: 'work', prs: due }
 }
 
+// The owner's plan usage, read from one tiny headless run on the cheapest model: Claude Code reports
+// the plan's 5-hour and weekly windows in a rate_limit_event only in stream-json output. A command
+// line with nothing from outside it, so the shell (which finds claude.cmd on Windows) is safe here.
+function usage() {
+  let out
+  try {
+    out = execSync('claude -p hi --model haiku --output-format stream-json --verbose', {
+      cwd: home(),
+      encoding: 'utf8',
+      env: { ...env, NIGHTSHIFT_AGENT: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 120_000,
+    })
+  } catch (error) {
+    // A run refused at the limit can still have printed its rate_limit_event.
+    out = String(error.stdout ?? '')
+    if (!usageFromStream(out)) throw error
+  }
+  const windows = usageFromStream(out)
+  // No event: Claude Code had nothing to report. So far it has only been seen once a window passed
+  // a warning level (75%), so no event is taken to mean no window is near USAGE_LIMITS.
+  if (!windows) return { status: 'work', reason: 'No usage warning.' }
+  const over = overUsage(windows)
+  if (windows.rejected) over.unshift('usage limit reached')
+  if (over.length) return idle(`Plan usage near its limit: ${over.join(', ')}.`, { limits: USAGE_LIMITS })
+  return { status: 'work', reason: 'Usage below the limits.', windows }
+}
+
 function repos() {
   const list = loadRegistry().repos.map((entry) => {
     try {
@@ -185,6 +217,7 @@ try {
   if (mode === 'repos') result = repos()
   else if (mode === 'peak')
     result = isPeak() ? idle('Peak hours (5–11 AM Pacific).') : { status: 'work', reason: 'Off-peak.' }
+  else if (mode === 'usage') result = usage()
   else if (mode === 'release') {
     if (!['build', 'review'].includes(agent) || !option('--repo'))
       throw new Error('Usage: release build|review --repo <name>')
@@ -204,7 +237,7 @@ try {
     }
   } else
     throw new Error(
-      'Usage: preflight.mjs repos | peak | build|review --repo <name> | release build|review --repo <name>',
+      'Usage: preflight.mjs repos | peak | usage | build|review --repo <name> | release build|review --repo <name>',
     )
 } catch (error) {
   result = { status: 'error', reason: String(error.stderr || error.message).trim() }

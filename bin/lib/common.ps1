@@ -48,3 +48,11 @@ function Get-NsBranchPrefix($checkout) {
 function Install-NsLauncher {
   Copy-Item (Join-Path $NsRoot 'bin\run.ps1') $NsLauncher -Force
 }
+
+# A Task Scheduler action that runs the launcher with no window. powershell.exe's -WindowStyle
+# Hidden still opens one first (and, where Windows Terminal is the default terminal, a whole
+# terminal window that stays), so the console host runs it headless instead.
+function New-NsHiddenAction($arguments) {
+  New-ScheduledTaskAction -Execute 'conhost.exe' `
+    -Argument "--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$NsLauncher`" $arguments"
+}
