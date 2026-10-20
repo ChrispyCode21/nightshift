@@ -5,7 +5,7 @@
 #   trigger.ps1 -Agent build|review (-Repo <name> | -Github <owner/repo>) [-Branch <b> -Sha <sha>] [-Now]
 #
 # -Branch/-Sha come from the pre-push hook: wait for that push to land, then make the branch's PR
-# due for review. -Now ignores peak hours and the cool-down.
+# due for review. -Now ignores peak hours, the cool-down and the usage check.
 param(
   [Parameter(Mandatory)][ValidateSet('build', 'review')][string]$Agent,
   [string]$Repo,
@@ -81,15 +81,25 @@ try {
     $pacific = [TimeZoneInfo]::FindSystemTimeZoneById('Pacific Standard Time')
     $nowPt = [TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $pacific)
     $at = [TimeZoneInfo]::ConvertTime($nowPt.Date.AddHours(11).AddMinutes(5), $pacific, [TimeZoneInfo]::Local)
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-      -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$NsLauncher`" trigger.ps1 -Agent $Agent -Repo $name"
+    $action = New-NsHiddenAction "trigger.ps1 -Agent $Agent -Repo $name"
     Register-ScheduledTask -TaskName "nightshift deferred $name $Agent" -Action $action `
       -Trigger (New-ScheduledTaskTrigger -Once -At $at) -Force | Out-Null
     Log "work found during peak hours; deferred to $($at.ToString('t'))"
     exit 0
   }
 
-  # 5. Run the skill headless. The session coordinates on Sonnet; the skill starts each tier's
+  # 5. Plan usage: near the 5-hour or weekly limit, leave the rest to the owner. The next watcher
+  # pass checks again.
+  if (-not $Now) {
+    $usage = node (Join-Path $NsRoot 'bin\preflight.mjs') usage | Out-String
+    if ($LASTEXITCODE -ne 0) {
+      $result = $usage | ConvertFrom-Json
+      Log "not running: $($result.reason)"
+      exit 0
+    }
+  }
+
+  # 6. Run the skill headless. The session coordinates on Sonnet; the skill starts each tier's
   # subagent on its own model. Permissions are in a settings file, so the subagents get them too.
   $settings = Join-Path $NsHome 'headless-settings.json'
   @{

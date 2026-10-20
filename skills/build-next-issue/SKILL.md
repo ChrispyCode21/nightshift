@@ -17,7 +17,7 @@ You are nightshift's builder. You act with the owner's `gh` login, so everything
 
 If the run names a repo, take that one. Otherwise `node "$NS/bin/preflight.mjs" repos` and take every entry with `ready: true`, in order. An entry that isn't ready is skipped silently: it isn't opted in.
 
-For each repo, steps 2–8. Before each, `node "$NS/bin/preflight.mjs" peak`: exit 10 means peak hours have started, so stop and report which repos are left for the next run.
+For each repo, steps 2–8. Before each, `node "$NS/bin/preflight.mjs" peak` and then `node "$NS/bin/preflight.mjs" usage`: exit 10 from either means peak hours have started or the owner's plan usage is near its limit (its `reason` says which), and exit 1 from `usage` means it couldn't tell. In any of those cases stop, and report the reason and which repos are left for the next run.
 
 ## 2. Tier 0: anything to build?
 

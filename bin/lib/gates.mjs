@@ -15,6 +15,40 @@ export function isPeak(date = new Date()) {
   return hour >= PEAK.start && hour < PEAK.end
 }
 
+// The share of the owner's plan usage the agents may reach: a run doesn't start once either window
+// is at or past its limit, so the rest of the window stays the owner's.
+export const USAGE_LIMITS = { five_hour: 0.85, seven_day: 0.9 }
+
+// The plan's usage windows from `claude -p --output-format stream-json --verbose` output: the last
+// rate_limit_event's `unifiedWindows` ({ five_hour: { utilization, resetsAt }, ... }), with
+// `rejected: true` when that run was refused outright. Null when the output has no such event.
+export function usageFromStream(text) {
+  let found = null
+  for (const line of text.split('\n')) {
+    if (!line.includes('"rate_limit_event"')) continue
+    try {
+      const event = JSON.parse(line)
+      if (event.type !== 'rate_limit_event') continue
+      const info = event.rate_limit_info ?? {}
+      found = { ...(info.unifiedWindows ?? {}), rejected: info.status === 'rejected' }
+    } catch {
+      // not a JSON line
+    }
+  }
+  return found
+}
+
+// The windows at or past their limits, as "five_hour 87% (resets <time>)".
+export function overUsage(windows, limits = USAGE_LIMITS) {
+  return Object.entries(limits)
+    .filter(([name, limit]) => windows[name]?.utilization >= limit)
+    .map(([name]) => {
+      const { utilization, resetsAt } = windows[name]
+      const reset = resetsAt ? ` (resets ${new Date(resetsAt * 1000).toISOString()})` : ''
+      return `${name} ${Math.round(utilization * 100)}%${reset}`
+    })
+}
+
 export function semver(title) {
   const m = /^v(\d+)\.(\d+)\.(\d+)$/.exec(title)
   return m && m.slice(1).map(Number)

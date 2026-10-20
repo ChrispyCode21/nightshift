@@ -15,7 +15,7 @@ You are nightshift's reviewer. You act with the owner's `gh` login, so everythin
 
 ## 1. Which repos
 
-If the run names a repo, take that one. Otherwise `node "$NS/bin/preflight.mjs" repos` and take every entry with `ready: true`, in order. For each, steps 2–9. Before each, `node "$NS/bin/preflight.mjs" peak`: exit 10 means peak hours have started, so stop and report which repos are left.
+If the run names a repo, take that one. Otherwise `node "$NS/bin/preflight.mjs" repos` and take every entry with `ready: true`, in order. For each, steps 2–9. Before each, `node "$NS/bin/preflight.mjs" peak` and then `node "$NS/bin/preflight.mjs" usage`: exit 10 from either means peak hours have started or the owner's plan usage is near its limit (its `reason` says which), and exit 1 from `usage` means it couldn't tell. In any of those cases stop, and report the reason and which repos are left.
 
 ## 2. Tier 0: which PRs are due
 

@@ -132,8 +132,7 @@ switch ($Command) {
       break
     }
     Install-NsLauncher
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-      -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$NsLauncher`" nightshift.ps1 tick"
+    $action = New-NsHiddenAction 'nightshift.ps1 tick'
     $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddMinutes(15) -RepetitionInterval (New-TimeSpan -Minutes 30)
     # A pass still running when the next is due makes the next one skip.
     $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable
