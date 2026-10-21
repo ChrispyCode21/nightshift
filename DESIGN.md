@@ -216,6 +216,7 @@ nightshift/
   bin/
     preflight.mjs          Tier 0: reads GitHub, the registry and the repo's config
     lib/gates.mjs          Tier 0's rules as pure functions, unit-tested
+    updates.mjs            the watcher's update questions; rules in lib/updates.mjs
     lib/config.mjs         the registry, the config and its defaults
     check.mjs              the baseline's script rules
     trigger.ps1            lock, refresh, gate, run or defer
@@ -230,6 +231,17 @@ nightshift/
 ```
 
 Installed once with `claude plugin marketplace add ChrispyCode21/nightshift`, then `claude plugin install nightshift@nightshift`. Skills are namespaced (`/nightshift:build-next-issue`); scripts are found through the plugin's install path, so nothing is copied into each repo except its config.
+
+## How updates reach a machine
+
+A merge to `main` changes nothing on a machine by itself. Two things have to happen, and neither is automatic:
+
+1. **The installed plugin.** Claude Code runs the cached copy in `~/.claude/plugins/cache/nightshift/<version>`, and `claude plugin update` installs only a new `version` from `plugin.json`. So a PR that changes `bin/`, `skills/`, `agents/` or `hooks/` must bump `version`; CI's "Plugin version bumped" step fails it otherwise. The owner then runs `claude plugin marketplace update nightshift` and `claude plugin update nightshift@nightshift`.
+2. **The watcher task.** Its action (the `conhost.exe --headless` command line) is stored in Task Scheduler when `nightshift watch` runs. On each `tick` the watcher compares the installed version (from `installed_plugins.json`, as `run.ps1` reads it) with the version it last registered for, kept in `update-state.json` in the nightshift home. When they differ it registers itself again exactly as `nightshift watch` does and records the version; when they match it leaves the task alone.
+
+The watcher only tells the owner about updates: nothing runs `claude plugin update` unasked, so the owner decides when new agent behavior starts (a buggy or test version never installs itself). Once a day, on a `tick`, it reads `version` from `plugin.json` on `main` through `gh`; when that is newer than the installed version it logs the line to `nightshift.log` and shows a Windows toast with the version and the two commands. The version compare and the once-a-day rule are `bin/lib/updates.mjs` (unit-tested), called through `bin/updates.mjs`. The check uses the nightshift token when one is set, which then needs read access to this repo's contents; if main can't be read it logs that and tries again tomorrow.
+
+Possible later: Claude Code can auto-update third-party marketplaces (`"autoUpdate": true` in `extraKnownMarketplaces`, off by default). It isn't used: reports differ on whether it reinstalls plugin code, and it would install whatever merges to `main` unseen. If it's turned on, the re-register step above already handles the new version.
 
 ## Moving Logtelligent over
 

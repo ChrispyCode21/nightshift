@@ -38,6 +38,68 @@ function Get-HookPath($checkout) {
   Join-Path $common 'hooks\pre-push'
 }
 function Slash($path) { $path -replace '\\', '/' }
+# The watcher: a Windows scheduled task running `tick` every 30 minutes through the launcher.
+function Register-NsWatcher {
+  Install-NsLauncher
+  $action = New-NsHiddenAction 'nightshift.ps1 tick'
+  $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddMinutes(15) -RepetitionInterval (New-TimeSpan -Minutes 30)
+  # A pass still running when the next is due makes the next one skip.
+  $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable
+  Register-ScheduledTask -TaskName $WatchTask -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+  Save-NsUpdateState @{ registeredVersion = Get-NsInstalledVersion }
+}
+
+# Updates (DESIGN.md, "How updates reach a machine"). The state file remembers the last daily
+# check and the plugin version the watcher task was last registered for.
+$NsUpdateState = Join-Path $NsHome 'update-state.json'
+$NsPluginRepo = 'ChrispyCode21/nightshift'
+function Get-NsUpdateState {
+  if (-not (Test-Path $NsUpdateState)) { return [pscustomobject]@{} }
+  try { Get-Content $NsUpdateState -Raw | ConvertFrom-Json } catch { [pscustomobject]@{} }
+}
+function Save-NsUpdateState($changes) {
+  $state = Get-NsUpdateState
+  foreach ($key in $changes.Keys) { $state | Add-Member -Force -NotePropertyName $key -NotePropertyValue $changes[$key] }
+  [IO.File]::WriteAllText($NsUpdateState, (ConvertTo-Json -InputObject $state))
+}
+# The installed version, read from installed_plugins.json the way run.ps1 finds the install.
+function Get-NsInstalledVersion {
+  $installed = Join-Path $env:USERPROFILE '.claude\plugins\installed_plugins.json'
+  if (-not (Test-Path $installed)) { return $null }
+  $entry = (Get-Content $installed -Raw | ConvertFrom-Json).plugins.'nightshift@nightshift' | Select-Object -First 1
+  $entry.version
+}
+function Show-NsToast($title, $text) {
+  try {
+    [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+    $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+    $nodes = $xml.GetElementsByTagName('text')
+    [void]$nodes.Item(0).AppendChild($xml.CreateTextNode($title))
+    [void]$nodes.Item(1).AppendChild($xml.CreateTextNode($text))
+    $appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show([Windows.UI.Notifications.ToastNotification]::new($xml))
+  } catch {
+    Write-NsLog "update: couldn't show a notification: $($_.Exception.Message)"
+  }
+}
+# Once a day: tells the owner when main's version is ahead of the installed one. Never updates.
+function Test-NsUpdate {
+  $updates = Join-Path $NsRoot 'bin\updates.mjs'
+  if ((node $updates due (Get-NsUpdateState).lastCheck) -ne 'true') { return }
+  $installed = Get-NsInstalledVersion
+  if (-not $installed) { return }
+  $latest = $null
+  if (Use-NsToken) {
+    $plugin = gh api "repos/$NsPluginRepo/contents/.claude-plugin/plugin.json" -H 'Accept: application/vnd.github.raw' 2>$null | Out-String
+    if ($LASTEXITCODE -eq 0) { try { $latest = ($plugin | ConvertFrom-Json).version } catch { } }
+  }
+  Save-NsUpdateState @{ lastCheck = (Get-Date).ToUniversalTime().ToString('o') }
+  if (-not $latest) { Write-NsLog "update: couldn't read the version on main"; return }
+  if ((node $updates newer $latest $installed) -ne 'true') { return }
+  $commands = 'claude plugin marketplace update nightshift, then claude plugin update nightshift@nightshift'
+  Write-NsLog "update: nightshift $latest is on main (installed $installed). Run: $commands"
+  Show-NsToast "nightshift $latest is available (installed $installed)" "Run: $commands"
+}
 
 switch ($Command) {
   'register' {
@@ -133,19 +195,20 @@ switch ($Command) {
       Write-Output 'Watcher removed.'
       break
     }
-    Install-NsLauncher
-    $action = New-NsHiddenAction 'nightshift.ps1 tick'
-    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddMinutes(15) -RepetitionInterval (New-TimeSpan -Minutes 30)
-    # A pass still running when the next is due makes the next one skip.
-    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable
-    Register-ScheduledTask -TaskName $WatchTask -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+    Register-NsWatcher
     Write-Output "Watcher installed: '$WatchTask' in Task Scheduler, every 30 minutes."
   }
   'tick' {
+    # The owner updated the plugin: the task still has the old action, so register it again.
+    if ((Get-NsInstalledVersion) -ne (Get-NsUpdateState).registeredVersion -and (Get-ScheduledTask -TaskName $WatchTask -ErrorAction SilentlyContinue)) {
+      Register-NsWatcher
+      Write-NsLog "watcher re-registered for nightshift $(Get-NsInstalledVersion)"
+    }
     foreach ($entry in Get-NsRepos | Where-Object { $_.enabled -ne $false }) {
       & (Join-Path $PSScriptRoot 'trigger.ps1') -Agent review -Repo $entry.name
       & (Join-Path $PSScriptRoot 'trigger.ps1') -Agent build -Repo $entry.name
     }
+    Test-NsUpdate
   }
   'token' {
     if ($Off) {
