@@ -28,6 +28,7 @@ import {
   USAGE_LIMITS,
   usageFromStream,
 } from './lib/gates.mjs'
+import { githubEnv } from './lib/github.mjs'
 
 const LOCK_HOURS = 4
 // Git reports "dubious ownership" for checkouts on drives that don't record owners (exFAT).
@@ -38,20 +39,27 @@ const env = {
   GIT_CONFIG_VALUE_0: '*',
 }
 
-const run = (cmd, args, cwd) =>
-  execFileSync(cmd, args, { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+const run = (cmd, args, cwd, runEnv = env) =>
+  execFileSync(cmd, args, { cwd, encoding: 'utf8', env: runEnv, stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 const idle = (reason, extra = {}) => ({ status: 'idle', reason, ...extra })
 
+// gh with the nightshift token when there is one (lib/github.mjs), read on first use. A token
+// that can't be read fails the run; it never falls back to the owner's own login.
+let ghEnv
+const tokenEnv = () => (ghEnv ??= githubEnv(env))
+const runGh = (args) => run('gh', args, undefined, tokenEnv())
+
 function github(repo) {
-  const json = (args) => JSON.parse(run('gh', args) || 'null')
+  const json = (args) => JSON.parse(runGh(args) || 'null')
   return {
     json,
     api: (path) => json(['api', `repos/${repo}/${path}`]),
     prs: (fields) => json(['pr', 'list', '-R', repo, '--state', 'open', '--limit', '200', '--json', fields]),
-    me: () => run('gh', ['api', 'user', '--jq', '.login']),
+    me: () => runGh(['api', 'user', '--jq', '.login']),
     succeeds: (args) => {
+      tokenEnv() // outside the try: an unreadable token is an error, not "no"
       try {
-        run('gh', args)
+        runGh(args)
         return true
       } catch {
         return false

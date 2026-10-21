@@ -10,6 +10,8 @@ $NsHome = if ($env:NIGHTSHIFT_HOME) { $env:NIGHTSHIFT_HOME } else { Join-Path $e
 $NsRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path # this file is bin\lib\common.ps1
 $NsRegistry = Join-Path $NsHome 'repos.json'
 $NsLauncher = Join-Path $NsHome 'run.ps1'
+# The fine-grained GitHub token the agents use, when the owner has set one (DESIGN.md, "GitHub access").
+$NsToken = Join-Path $NsHome 'gh-token'
 foreach ($dir in 'logs', 'locks', 'last-run') { New-Item -ItemType Directory -Force (Join-Path $NsHome $dir) | Out-Null }
 
 # Git reports "dubious ownership" on drives that don't record owners (exFAT); runs inherit these.
@@ -42,6 +44,20 @@ function Get-NsBranchPrefix($checkout) {
   $path = Join-Path $checkout '.claude\nightshift.json'
   $config = if (Test-Path $path) { Get-Content $path -Raw | ConvertFrom-Json } else { $null }
   if ($config.builder.branchPrefix) { $config.builder.branchPrefix } else { 'agent/issue-' }
+}
+
+# Points gh at the nightshift token for this process and everything it starts, when there is one.
+# Returns $false when the token is there but can't be read: callers stop rather than fall back to
+# the owner's own gh login, which can do far more.
+function Use-NsToken {
+  if (-not (Test-Path $NsToken)) { return $true }
+  try {
+    $secure = (Get-Content -Raw -LiteralPath $NsToken).Trim() | ConvertTo-SecureString -ErrorAction Stop
+    $env:GH_TOKEN = [Net.NetworkCredential]::new('', $secure).Password
+    return [bool]$env:GH_TOKEN
+  } catch {
+    return $false
+  }
 }
 
 # The launcher in the nightshift home, refreshed from this plugin version.

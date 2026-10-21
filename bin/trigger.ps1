@@ -30,6 +30,7 @@ if (-not $entry) { exit 0 } # not registered: nothing to do
 if ($entry.enabled -eq $false) { exit 0 }
 $name = $entry.name
 function Log($message) { Write-NsLog "[$name $Agent] $message" }
+if (-not (Use-NsToken)) { Log "couldn't read the nightshift GitHub token; nothing run (nightshift.ps1 token)"; exit 1 }
 $work = if ($Agent -eq 'build' -and $entry.builder) { $entry.builder }
   elseif ($Agent -eq 'review' -and $entry.reviewer) { $entry.reviewer }
   else { $entry.checkout }
@@ -101,11 +102,13 @@ try {
 
   # 6. Run the skill headless. The session coordinates on Sonnet; the skill starts each tier's
   # subagent on its own model. Permissions are in a settings file, so the subagents get them too.
+  # No gh: the skills reach GitHub through `node bin/gh.mjs`, which allows only the gh commands they
+  # use (DESIGN.md, "GitHub access").
   $settings = Join-Path $NsHome 'headless-settings.json'
   @{
     permissions = @{
       allow = @(
-        'Bash(git:*)', 'Bash(gh:*)', 'Bash(node:*)', 'Bash(npm:*)', 'Bash(npx:*)', 'Bash(cd:*)', 'Bash(ls:*)',
+        'Bash(git:*)', 'Bash(node:*)', 'Bash(npm:*)', 'Bash(npx:*)', 'Bash(cd:*)', 'Bash(ls:*)',
         'Bash(mkdir:*)', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'Agent'
       )
     }

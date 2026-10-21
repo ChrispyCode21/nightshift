@@ -6,6 +6,7 @@ nightshift runs two agents on any repo you opt in: a **builder** that turns a mi
 
 - **Any repo, opt-in only.** Agents run only where the repo has a config file *and* you registered its checkout on this machine.
 - **Your plan, not API credit.** Desktop scheduled tasks and `claude -p` on your login. No GitHub Actions, no API keys.
+- **Only the GitHub access the agents need.** They run only the gh commands nightshift uses, and with a fine-grained token, only on the registered repos ("GitHub access").
 - **Off-peak.** Nightly runs, and triggered runs deferred past Anthropic's peak hours (5–11 AM Pacific).
 - **Your usage first.** No run starts once the plan's 5-hour window is at 85% or its weekly window at 90%.
 - **Cheap when idle.** Tier 0 is a script; a night with nothing to do costs no tokens.
@@ -29,6 +30,28 @@ The same mechanics Logtelligent uses now (its PIPELINE.md, "Tiers" and "Triggers
 **Schedule.** Two desktop scheduled tasks: builder at 2:00 AM, reviewer at 4:00 AM Central. Each loops over the registry, one repo at a time, at most one build per repo per night. Before starting each repo it checks the clock and the plan's usage: a repo it reaches during peak hours waits for the deferred run, and one it reaches with usage near the limits (`USAGE_LIMITS` in `gates.mjs`) waits for the next run. `preflight.mjs usage` reads the usage from one tiny headless Haiku run, the only place Claude Code reports it outside its interactive status line.
 
 **Triggers.** One watcher (a Windows scheduled task, every 30 minutes) runs Tier 0 for every registered repo; a pre-push hook in each registered checkout starts the reviewer when you push to an agent or Dependabot branch; `nightshift trigger <repo> build|review` by hand. All go through `trigger.ps1`: lock check, refresh, Tier 0, then run headless or defer past peak, unless usage is near the limits. The Windows scheduled tasks run under `conhost.exe --headless`, so they never open a window.
+
+## GitHub access
+
+The agents act as you on GitHub, and everything they read in issues, comments and PRs is untrusted text. Two limits keep text that tries to steer them from reaching more than PRs and issues:
+
+- **Only nightshift's gh commands.** The skills run gh through `node bin/gh.mjs`, which allows `pr` (checks, comment, create, diff, edit, list, merge, view), `issue` (comment, create, edit, list, view), `label` (create, list), `repo view`, `run` (list, view) and `api` with GET or POST, and refuses the rest (`auth token`, `secret`, `repo delete`, `workflow run`, `api -X DELETE`, …). Headless runs don't allow `gh` itself at all. The list is in `bin/lib/github.mjs`.
+- **A fine-grained token (optional, recommended).** Without one, gh uses your own login, which reaches every repo you can. `nightshift.ps1 token` stores a fine-grained token, encrypted with Windows DPAPI for your user, and Tier 0, `gh.mjs` and `trigger.ps1` use it. A token that can't be read stops the run; it never falls back to your login. `token -Off` goes back to your login.
+
+Create the token at GitHub → Settings → Developer settings → Fine-grained tokens:
+
+| Setting | Value |
+|---|---|
+| Repository access | Only select repositories: the registered ones |
+| Contents | Read and write (merging) |
+| Pull requests | Read and write |
+| Issues | Read and write (comments, labels, sub-issues, blockers) |
+| Actions, Commit statuses | Read-only (CI results for `pr checks` and failure logs) |
+| Workflows | Only if a repo sets `ownerMerges.dependabotWorkflows: false`, so the reviewer can merge PRs that change `.github/workflows/` |
+
+`token` checks the token against GitHub before saving it, then lists each registered repo and whether the token can read its PRs and checks. Register a new repo, and add it to the token too. Fine-grained tokens expire: when one does, runs log gh's error, and `token` sets the new one.
+
+What the token doesn't cover: `git push` uses your SSH key, as before, so branch protection is still what guards the default branch. And the agents can run any `node` or `npm` command, so these limits stop steered gh commands, not a determined script; the full answer would be running nightshift as its own Windows user.
 
 ## Opting a repo in
 

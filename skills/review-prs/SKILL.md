@@ -5,13 +5,13 @@ description: nightshift's reviewer. For each registered, opted-in repo (or the o
 
 # Review PRs
 
-You are nightshift's reviewer. You act with the owner's `gh` login, so everything you push, comment or merge is the owner's. No one is watching: never ask a question mid-run. Anything you can't settle holds the PR (step 7) and the run moves on.
+You are nightshift's reviewer. You act as the owner on GitHub (with the nightshift token when one is set, otherwise the owner's `gh` login), so everything you push, comment or merge is the owner's. No one is watching: never ask a question mid-run. Anything you can't settle holds the PR (step 7) and the run moves on.
 
 **You coordinate; the tiers think.** You run the commands and the GitHub writes. Reviewing and fixing are done by subagents: Tier 1 reviews (Sonnet), Tier 2 decides (`nightshift:finding-judge`, Opus), Tier 3 fixes (`general-purpose`, `model: "sonnet"`). Pass files, not transcripts.
 
 `$NS` below is this plugin's root, `${CLAUDE_PLUGIN_ROOT}`; Tier 0 is `node "$NS/bin/preflight.mjs"`.
 
-**Commands:** run each command on its own, starting with the program (`git -C <path> …`, `gh … -R <owner/repo>`, `node …`, a `cd <path>` alone before `npm …`), never chained after `cd` or prefixed with environment variables. Headless runs allow commands by their first word. Pass `-c safe.directory='*'` to git on drives that don't record owners. Tell every subagent the same.
+**Commands:** run each command on its own, starting with the program (`git -C <path> …`, `node "$NS/bin/gh.mjs" … -R <owner/repo>`, `node …`, a `cd <path>` alone before `npm …`), never chained after `cd` or prefixed with environment variables. Headless runs allow commands by their first word. GitHub commands always go through `node "$NS/bin/gh.mjs" <gh arguments>`, never `gh` itself: it uses the nightshift token and allows only the gh commands nightshift needs (it says which when it refuses one). Spell out `$NS` when you pass this rule to a subagent. Pass `-c safe.directory='*'` to git on drives that don't record owners. Tell every subagent the same.
 
 ## 1. Which repos
 
@@ -29,7 +29,7 @@ Exit 10: note "No PRs due." and go to the next repo. Exit 1: note the error, nex
 
 ## 3. Claim it and check it out
 
-1. `gh pr edit <n> -R <owner/repo> --add-label reviewed` before anything else, so a second run skips it.
+1. `node "$NS/bin/gh.mjs" pr edit <n> -R <owner/repo> --add-label reviewed` before anything else, so a second run skips it.
 2. `git worktree add -B <branch> .claude/worktrees/review-pr-<n> origin/<branch>` from the reviewer checkout, then `config.checks.install` in it, if set.
 3. Bring it up to date: `git fetch origin`, then merge `origin/<default branch>`. Resolve conflicts in favor of the default branch's intent plus the PR's change, run `config.checks.fast`, and commit the merge.
 
@@ -58,12 +58,12 @@ If `config.standards.checker` is set, run it in the worktree and add what it rep
 ## 7. Push, then hold or merge
 
 1. New commits: `git -C <worktree> push origin HEAD:<branch>`.
-2. **Out of scope** findings (and the PR body's suggested follow-ups): each becomes an issue, `gh issue create -R <owner/repo> --label agent-followup`, body starting "Found reviewing #<n>." No milestone.
+2. **Out of scope** findings (and the PR body's suggested follow-ups): each becomes an issue, `node "$NS/bin/gh.mjs" issue create -R <owner/repo> --label agent-followup`, body starting "Found reviewing #<n>." No milestone.
 3. **Standards** findings: step 8.
-4. **Wait for CI:** `gh pr checks <n> -R <owner/repo> --watch --required`. On a failure, count earlier attempts (`git log origin/<default branch>..HEAD --grep='Local-review: ci-fix'`). Under 2: a Tier 3 subagent on the failure alone, with a `Local-review: ci-fix` trailer (an attempt with no change is committed with `--allow-empty`, so it counts); push and wait again. At 2: hold ("CI still failing after 2 fix attempts: <check>").
+4. **Wait for CI:** `node "$NS/bin/gh.mjs" pr checks <n> -R <owner/repo> --watch --required`. On a failure, count earlier attempts (`git log origin/<default branch>..HEAD --grep='Local-review: ci-fix'`). Under 2: a Tier 3 subagent on the failure alone, with a `Local-review: ci-fix` trailer (an attempt with no change is committed with `--allow-empty`, so it counts); push and wait again. At 2: hold ("CI still failing after 2 fix attempts: <check>").
 5. **Hold** if anything is held: one comment listing each held finding and why, and a line listing what was dropped and why. Don't merge.
 6. **The owner merges** a PR with a label in `config.reviewer.ownerMerges.labels`, a release PR when `ownerMerges.release` (one that closes a `Release …` issue), or a Dependabot PR touching `.github/workflows/` when `ownerMerges.dependabotWorkflows`: one comment that it's reviewed and ready, what was dropped, and the `config.reviewer.mergeNotes` line for each of its labels. Don't merge.
-7. **Merge** otherwise: `gh pr merge <n> -R <owner/repo> --<config.reviewer.mergeMethod> --body "<what was dropped and why, one line each, or Nothing dropped.>"`. It must be green and up to date. If the default branch moved, redo step 3.3, push, and return to 7.4; review again (steps 4–6) only if the merge had conflicts.
+7. **Merge** otherwise: `node "$NS/bin/gh.mjs" pr merge <n> -R <owner/repo> --<config.reviewer.mergeMethod> --body "<what was dropped and why, one line each, or Nothing dropped.>"`. It must be green and up to date. If the default branch moved, redo step 3.3, push, and return to 7.4; review again (steps 4–6) only if the merge had conflicts.
 
 ## 8. The standards issue
 

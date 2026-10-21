@@ -8,9 +8,10 @@
 #   nightshift.ps1 trigger <name> build|review [-Now]
 #   nightshift.ps1 watch [-Off]               the 30-minute watcher (a Windows scheduled task)
 #   nightshift.ps1 tick                       one watcher pass: Tier 0 for every enabled repo
+#   nightshift.ps1 token [-Off]               the fine-grained GitHub token the agents use
 param(
   [Parameter(Mandatory, Position = 0)]
-  [ValidateSet('register', 'unregister', 'enable', 'disable', 'status', 'trigger', 'watch', 'tick')]
+  [ValidateSet('register', 'unregister', 'enable', 'disable', 'status', 'trigger', 'watch', 'tick', 'token')]
   [string]$Command,
   [Parameter(Position = 1)][string]$Target,
   [Parameter(Position = 2)][string]$Agent,
@@ -117,6 +118,7 @@ switch ($Command) {
     if (-not $ready.repos) { Write-Output 'No repos registered.' }
     $task = Get-ScheduledTask -TaskName $WatchTask -ErrorAction SilentlyContinue
     Write-Output "`nWatcher: $(if ($task) { $task.State } else { 'not installed' })"
+    Write-Output "GitHub:  $(if (Test-Path $NsToken) { 'the nightshift token' } else { 'your own gh login (nightshift.ps1 token narrows it)' })"
     $log = Join-Path $NsHome 'logs\nightshift.log'
     if (Test-Path $log) { Write-Output "`nRecent:"; Get-Content $log -Tail 8 }
   }
@@ -144,5 +146,31 @@ switch ($Command) {
       & (Join-Path $PSScriptRoot 'trigger.ps1') -Agent review -Repo $entry.name
       & (Join-Path $PSScriptRoot 'trigger.ps1') -Agent build -Repo $entry.name
     }
+  }
+  'token' {
+    if ($Off) {
+      Remove-Item -LiteralPath $NsToken -ErrorAction SilentlyContinue
+      Write-Output 'Token removed. The agents use your own gh login again.'
+      break
+    }
+    Write-Output 'Paste a fine-grained GitHub token (DESIGN.md, "GitHub access" says which permissions).'
+    Write-Output 'It is stored encrypted, readable only by this Windows user on this machine.'
+    $secure = Read-Host -AsSecureString 'Token'
+    if ($secure.Length -eq 0) { Fail 'No token given; nothing changed.' }
+    $env:GH_TOKEN = [Net.NetworkCredential]::new('', $secure).Password
+    $login = gh api user --jq .login 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $login) {
+      Remove-Item Env:GH_TOKEN
+      Fail "GitHub didn't accept that token; nothing changed."
+    }
+    Set-Content -LiteralPath $NsToken -Value ($secure | ConvertFrom-SecureString) -Encoding ascii
+    Write-NsLog 'GitHub token set'
+    Write-Output "Saved. The agents now act as $login with this token. Checking each registered repo:"
+    foreach ($entry in Get-NsRepos) {
+      gh pr list -R $entry.github --state all --limit 1 --json number,statusCheckRollup 2>$null | Out-Null
+      $note = if ($LASTEXITCODE -eq 0) { 'can read PRs and checks' } else { "can't read PRs or checks: add it to the token" }
+      Write-Output ("  {0,-36} {1}" -f $entry.github, $note)
+    }
+    Remove-Item Env:GH_TOKEN
   }
 }
