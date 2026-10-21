@@ -22,6 +22,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
@@ -45,3 +46,16 @@ jobs:
           if ($failed) { exit 1 }
       - name: Shell scripts (shellcheck)
         run: git ls-files '*.sh' 'bin/hooks/*' | xargs --no-run-if-empty shellcheck
+      - name: Plugin version bumped
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # Installs only pick up a new `version` (DESIGN.md, "How updates reach a machine").
+          if git diff --quiet "$BASE_SHA"...HEAD -- bin skills agents hooks; then exit 0; fi
+          old=$(git show "$BASE_SHA:.claude-plugin/plugin.json" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')
+          new=$(node -p 'require("./.claude-plugin/plugin.json").version')
+          if [ "$old" = "$new" ]; then
+            echo "::error file=.claude-plugin/plugin.json::bin/, skills/, agents/ or hooks/ changed but the plugin version is still $old. Bump it so installs update."
+            exit 1
+          fi
