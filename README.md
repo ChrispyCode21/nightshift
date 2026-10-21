@@ -19,6 +19,8 @@ $ns = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Ra
 & "$ns\bin\nightshift.ps1" register D:\Projects\MyRepo
 ```
 
+Optionally, give the agents a fine-grained GitHub token scoped to the registered repos, instead of your full gh login (DESIGN.md, "GitHub access" lists the permissions): `nightshift.ps1 token`.
+
 After the first registration, `%USERPROFILE%\.nightshift\run.ps1 nightshift.ps1 <command>` runs the installed version from anywhere.
 
 ## Run it
@@ -37,5 +39,6 @@ After the first registration, `%USERPROFILE%\.nightshift\run.ps1 nightshift.ps1 
 | `status` | the registered repos, the watcher, and recent log lines |
 | `trigger <name> build\|review` | runs one agent for one repo now, if Tier 0 finds work |
 | `watch` / `watch -Off` | installs or removes the 30-minute watcher |
+| `token` / `token -Off` | sets or removes the fine-grained GitHub token the agents use |
 
 State (registry, locks, logs) lives in `%USERPROFILE%\.nightshift\`.
