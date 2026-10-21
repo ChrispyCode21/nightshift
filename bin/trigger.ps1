@@ -19,9 +19,10 @@ param(
 # After a headless run, the watcher leaves that repo's agent alone this long, so a run that fails
 # or can't finish its work costs one run, not one every 30 minutes.
 $CooldownHours = 3
-# The longest a run may take. Claude Code would end a headless run 10 minutes after its last turn if
-# a subagent were still in the background, so the run waits as long as it needs (the ceiling is
-# off), and this stops one that hangs. Under the lock's 4 hours (preflight.mjs).
+# Claude Code ends a headless run's background subagents this long after the coordinator's last
+# turn ("Background tasks still running…"); its default is 10 minutes, too short for a Tier 3 build.
+$BgWaitMinutes = 70
+# The longest a run may take in all, to stop one that hangs. Under the lock's 4 hours (preflight.mjs).
 $RunHours = 3
 $Skill = @{ build = 'build-next-issue'; review = 'review-prs' }[$Agent]
 # Keeps the pre-push hook from triggering on the agents' own pushes.
@@ -128,7 +129,7 @@ try {
   # The run takes the lock through preflight.mjs under this pid, so a run that dies without
   # releasing it (killed, or the machine restarted) doesn't hold the repo for hours.
   $env:NIGHTSHIFT_RUN_PID = "$PID"
-  $env:CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = '0'
+  $env:CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = "$($BgWaitMinutes * 60 * 1000)"
   $timedOut = $false
   $exitCode = 1
   try {

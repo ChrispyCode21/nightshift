@@ -49,11 +49,3 @@ test('processAlive: this process is, a pid that does not exist is not', () => {
   assert.equal(processAlive(process.pid), true)
   assert.equal(processAlive(2 ** 22 + 12345), false)
 })
-
-test('the skills keep subagents in the foreground', async () => {
-  const { readFileSync } = await import('node:fs')
-  for (const skill of ['build-next-issue', 'review-prs']) {
-    const text = readFileSync(new URL(`../skills/${skill}/SKILL.md`, import.meta.url), 'utf8')
-    assert.match(text, /Run every subagent in the foreground/, skill)
-  }
-})
