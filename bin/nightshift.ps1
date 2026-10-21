@@ -9,9 +9,10 @@
 #   nightshift.ps1 watch [-Off]               the 30-minute watcher (a Windows scheduled task)
 #   nightshift.ps1 tick                       one watcher pass: Tier 0 for every enabled repo
 #   nightshift.ps1 token [-Off]               the fine-grained GitHub token the agents use
+#   nightshift.ps1 tidy [<checkout>] [-DryRun]  deletes merged local branches and their clean worktrees
 param(
   [Parameter(Mandatory, Position = 0)]
-  [ValidateSet('register', 'unregister', 'enable', 'disable', 'status', 'trigger', 'watch', 'tick', 'token')]
+  [ValidateSet('register', 'unregister', 'enable', 'disable', 'status', 'trigger', 'watch', 'tick', 'token', 'tidy')]
   [string]$Command,
   [Parameter(Position = 1)][string]$Target,
   [Parameter(Position = 2)][string]$Agent,
@@ -19,7 +20,8 @@ param(
   [string]$Builder,
   [string]$Reviewer,
   [switch]$Now,
-  [switch]$Off
+  [switch]$Off,
+  [switch]$DryRun
 )
 . (Join-Path $PSScriptRoot 'lib\common.ps1')
 $WatchTask = 'nightshift watch'
@@ -204,11 +206,19 @@ switch ($Command) {
       Register-NsWatcher
       Write-NsLog "watcher re-registered for nightshift $(Get-NsInstalledVersion)"
     }
+    # Once a day, from the first pass after 9 PM, before this pass can start a run that takes a
+    # repo's lock (DESIGN.md, "Tidying checkouts"). It logs its own lines.
+    node (Join-Path $NsRoot 'bin\tidy.mjs') --all --daily | Out-Null
     foreach ($entry in Get-NsRepos | Where-Object { $_.enabled -ne $false }) {
       & (Join-Path $PSScriptRoot 'trigger.ps1') -Agent review -Repo $entry.name
       & (Join-Path $PSScriptRoot 'trigger.ps1') -Agent build -Repo $entry.name
     }
     Test-NsUpdate
+  }
+  'tidy' {
+    $tidyArgs = @(if ($Target) { (Resolve-Path $Target).Path } else { '--all' })
+    if ($DryRun) { $tidyArgs += '--dry-run' }
+    node (Join-Path $NsRoot 'bin\tidy.mjs') @tidyArgs
   }
   'token' {
     if ($Off) {
