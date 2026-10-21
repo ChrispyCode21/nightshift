@@ -122,7 +122,9 @@ function tidyCheckout(checkout, ghEnv) {
     tryOr(false, () => (git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${name}`]), true))
 
   const decisions = []
-  for (const [name, upstream, track, sha] of refs) {
+  for (const [name, configured, track, sha] of refs) {
+    // `git checkout -b x origin/main` sets origin/main as x's upstream; that's not x on origin.
+    const upstream = name !== defaultBranch && configured === base ? '' : configured
     const remote = upstream
       ? track.includes('gone')
         ? 'gone'
