@@ -40,5 +40,6 @@ After the first registration, `%USERPROFILE%\.nightshift\run.ps1 nightshift.ps1 
 | `trigger <name> build\|review` | runs one agent for one repo now, if Tier 0 finds work |
 | `watch` / `watch -Off` | installs or removes the 30-minute watcher |
 | `token` / `token -Off` | sets or removes the fine-grained GitHub token the agents use |
+| `tidy [<checkout>] [-DryRun]` | deletes local branches whose work is on `main` and their clean worktrees; the watcher runs it nightly after 9 PM (DESIGN.md, "Tidying checkouts") |
 
 State (registry, locks, logs) lives in `%USERPROFILE%\.nightshift\`.
