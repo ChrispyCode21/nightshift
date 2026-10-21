@@ -7,11 +7,14 @@
 //   node preflight.mjs usage                                  exit 10 when plan usage is near its limits
 //   node preflight.mjs build|review --repo <name> [--claim | --ignore-lock]
 //   node preflight.mjs release build|review --repo <name>     drop that run's lock
+//   node preflight.mjs lock build|review --repo <name>        exit 10 while a run holds the lock
+//   node preflight.mjs outcome --exit <code> --log <file> [--timed-out]   exit 10 if a run failed
 //
 // Prints one JSON object (with the repo's resolved config when there's work). Exit 0: there's work
 // (`status: "work"`); 10: nothing to do (`status: "idle"`, with `reason`); 1: it failed.
 // --claim takes a lock for that repo and agent when there's work, so a scheduled run and a
-// triggered one never overlap; --ignore-lock is for the run holding it, to check again.
+// triggered one never overlap; --ignore-lock is for the run holding it, to check again. A lock
+// goes stale after LOCK_HOURS, or at once when trigger.ps1 took it and its process has gone.
 import { execFileSync, execSync } from 'node:child_process'
 import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -29,6 +32,7 @@ import {
   usageFromStream,
 } from './lib/gates.mjs'
 import { githubEnv } from './lib/github.mjs'
+import { decodeLog, formatLock, lockHeld, processAlive, runFailure } from './lib/runs.mjs'
 
 const LOCK_HOURS = 4
 // Git reports "dubious ownership" for checkouts on drives that don't record owners (exFAT).
@@ -80,7 +84,8 @@ function lockHolder(path) {
   }
   try {
     const ageHours = (Date.now() - fstatSync(fd).mtimeMs) / 3_600_000
-    return ageHours < LOCK_HOURS ? readFileSync(fd, 'utf8').trim() : null
+    const text = readFileSync(fd, 'utf8').trim()
+    return lockHeld(text, { ageHours, maxHours: LOCK_HOURS, isAlive: processAlive }) ? text : null
   } finally {
     closeSync(fd)
   }
@@ -89,7 +94,14 @@ function lockHolder(path) {
 function claim(path) {
   mkdirSync(join(home(), 'locks'), { recursive: true })
   rmSync(path, { force: true }) // stale, or this run's own (--ignore-lock)
-  writeFileSync(path, `pid ${process.pid}, since ${new Date().toISOString()}`, { flag: 'wx' }) // fails on a race
+  // trigger.ps1 passes its own pid: this process ends with the command, the launcher outlives the run.
+  const runner = Number(process.env.NIGHTSHIFT_RUN_PID) || null
+  const text = formatLock({
+    pid: runner ?? process.pid,
+    runner: Boolean(runner),
+    since: new Date().toISOString(),
+  })
+  writeFileSync(path, text, { flag: 'wx' }) // fails on a race
 }
 
 function build({ entry, config }) {
@@ -231,6 +243,18 @@ try {
       throw new Error('Usage: release build|review --repo <name>')
     rmSync(lockPath(option('--repo'), agent), { force: true })
     process.exit(0)
+  } else if (mode === 'outcome') {
+    // A finished headless run: idle (exit 10) with the reason when it didn't finish its work.
+    const log = decodeLog(readFileSync(option('--log')))
+    const reason = runFailure({ exitCode: Number(option('--exit')), timedOut: flag('--timed-out'), log })
+    result = reason ? idle(reason) : { status: 'work', reason: 'Finished.' }
+  } else if (mode === 'lock') {
+    if (!['build', 'review'].includes(agent) || !option('--repo'))
+      throw new Error('Usage: lock build|review --repo <name>')
+    const holder = lockHolder(lockPath(option('--repo'), agent))
+    result = holder
+      ? idle(`A ${agent} run is in progress (${holder}).`)
+      : { status: 'work', reason: 'No run holds the lock.' }
   } else if (mode === 'build' || mode === 'review') {
     const name = option('--repo')
     if (!name) throw new Error(`Usage: ${mode} --repo <name> [--claim | --ignore-lock]`)
@@ -245,7 +269,7 @@ try {
     }
   } else
     throw new Error(
-      'Usage: preflight.mjs repos | peak | usage | build|review --repo <name> | release build|review --repo <name>',
+      'Usage: preflight.mjs repos | peak | usage | build|review --repo <name> | release|lock build|review --repo <name>',
     )
 } catch (error) {
   result = { status: 'error', reason: String(error.stderr || error.message).trim() }
