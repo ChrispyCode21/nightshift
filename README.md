@@ -25,7 +25,7 @@ After the first registration, `%USERPROFILE%\.nightshift\run.ps1 nightshift.ps1 
 
 ## Labels
 
-GitHub labels belong to one repository; there are no account-wide labels. `register` creates nightshift's standard labels in the repo it registers: `on-hold`, `agent-needs-info`, `agent-followup`, `standards`, `touches-data`, `touches-gates`, `reviewed`, `nightshift` and `question`. It only creates the ones that are missing, never changes one that exists, and only warns if it can't (a token that doesn't include the repo yet: add it, then run `register` again). The list is `bin/lib/labels.mjs`.
+GitHub labels belong to one repository; there are no account-wide labels. `register` creates nightshift's standard labels in the repo it registers: `on-hold`, `agent-needs-info`, `agent-followup`, `standards`, `touches-data`, `touches-gates`, `reviewed`, `nightshift` and `question`. It only creates the ones that are missing, never changes one that exists, and only warns if it can't (a token that doesn't include the repo yet: add it, then run `register` again with the same options; that also re-enables a disabled repo). The list is `bin/lib/labels.mjs`.
 
 Putting `on-hold` on an issue pauses that issue for the builder: it skips it and reports it as waiting. It doesn't pause the repo (`disable` does) or the reviewer. Remove the label to resume.
 

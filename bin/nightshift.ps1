@@ -155,7 +155,7 @@ switch ($Command) {
     $labelNote = (node (Join-Path $NsRoot 'bin\labels.mjs') $github | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) {
       Write-NsLog "[$repoName] labels: $labelNote"
-      $labelNote = "WARNING: $labelNote. If the token doesn't include $github yet, add it, then run register again."
+      $labelNote = "WARNING: $labelNote. If the token doesn't include $github yet, add it, then run register again with the same options (this also re-enables a disabled repo)."
     }
     Write-Output "Registered $repoName ($github)."
     Write-Output "  checkout  $checkout"

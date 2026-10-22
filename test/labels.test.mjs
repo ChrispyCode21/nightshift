@@ -16,7 +16,7 @@ test('the standard labels: a name, a six-digit color, and a description GitHub a
   }
 })
 
-test('the standard labels include the ones the owner named, with the wording he gave', () => {
+test('the standard labels include the ones the owner named, with the owner's wording', () => {
   const byName = Object.fromEntries(STANDARD_LABELS.map((l) => [l.name, l.description]))
   for (const name of [
     'on-hold',
