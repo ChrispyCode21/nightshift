@@ -123,7 +123,7 @@ try {
   $runLog = Join-Path $NsHome "logs\$name-$Agent-$stamp.log"
   $promptFile = Join-Path $NsHome "logs\$name-$Agent-$stamp.prompt"
   Set-Content -Encoding utf8 $promptFile $prompt
-  Log "running $Skill; log $runLog"
+  Log "running $Skill; log $(Split-Path -Leaf $runLog)"
   New-Item -ItemType File -Force $lastRun | Out-Null
 
   # The run takes the lock through preflight.mjs under this pid, so a run that dies without
@@ -132,6 +132,7 @@ try {
   $env:CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = "$($BgWaitMinutes * 60 * 1000)"
   $timedOut = $false
   $exitCode = 1
+  $startedAt = (Get-Date).ToUniversalTime().ToString('o')
   try {
     $command = "& claude -p (Get-Content -Raw -Encoding utf8 '$promptFile') --model sonnet --permission-mode acceptEdits --settings '$settings'; exit `$LASTEXITCODE"
     $proc = Start-Process powershell.exe -ArgumentList '-NoProfile', '-Command', $command -WorkingDirectory $work `
@@ -146,22 +147,28 @@ try {
     # The skill releases the lock when it gets that far; a cut-off run never does.
     node (Join-Path $NsRoot 'bin\preflight.mjs') release $Agent --repo $name | Out-Null
     Remove-Item Env:NIGHTSHIFT_RUN_PID, Env:CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS -ErrorAction SilentlyContinue
-    if (Test-Path "$runLog.err") {
-      Add-Content -Path $runLog -Value (Get-Content -Raw "$runLog.err")
-      Remove-Item "$runLog.err"
-    }
     Remove-Item $promptFile -ErrorAction SilentlyContinue
   }
   # Claude Code can exit 0 after it stopped a run (e.g. subagents still in the background), so the
-  # log is read too.
-  $outcomeArgs = @('--exit', $exitCode, '--log', $runLog)
+  # logs are read too. The summary comes from stdout alone; stderr only counts toward a failure.
+  # The same step appends the run to runs.jsonl, so the log line and the record agree.
+  $outcomeArgs = @('--exit', $exitCode, '--log', $runLog, '--err', "$runLog.err", '--start', $startedAt,
+    '--repo', $name, '--agent', $Agent)
   if ($timedOut) { $outcomeArgs += '--timed-out' }
   $outcome = node (Join-Path $NsRoot 'bin\preflight.mjs') outcome @outcomeArgs | Out-String
-  if ($LASTEXITCODE -eq 10) {
-    Log "failed: $(($outcome | ConvertFrom-Json).reason)"
+  $outcomeExit = $LASTEXITCODE
+  # stderr joins the run log once it has been read.
+  if (Test-Path "$runLog.err") {
+    Add-Content -Path $runLog -Value (Get-Content -Raw "$runLog.err")
+    Remove-Item "$runLog.err"
+  }
+  $result = $outcome | ConvertFrom-Json
+  $took = if ($null -ne $result.durationSeconds) { " in $($result.durationSeconds)s" } else { '' }
+  if ($outcomeExit -ne 0) {
+    Log "failed: $($result.reason)$took"
     exit 1
   }
-  Log "finished ($exitCode)"
+  Log "finished ($exitCode)$took: $(if ($result.summary) { $result.summary } else { '(no output)' })"
 } catch {
   Log "failed: $_"
   exit 1

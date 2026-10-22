@@ -36,9 +36,9 @@ After the first registration, `%USERPROFILE%\.nightshift\run.ps1 nightshift.ps1 
 | `register <checkout>` | opts a checkout in on this machine (the repo must have its config file) |
 | `unregister <name>` | removes the hook and the entry; leaves the checkouts |
 | `enable` / `disable <name>` | pauses a repo without touching its code |
-| `status` | the registered repos, the watcher, and recent log lines |
+| `status` | the registered repos, the watcher, and the last 15 log lines (each run ends with what it did) |
 | `trigger <name> build\|review` | runs one agent for one repo now, if Tier 0 finds work |
 | `watch` / `watch -Off` | installs or removes the 30-minute watcher |
 | `token` / `token -Off` | sets or removes the fine-grained GitHub token the agents use |
 
-State (registry, locks, logs) lives in `%USERPROFILE%\.nightshift\`.
+State (registry, locks, logs, and `runs.jsonl`, one record per run) lives in `%USERPROFILE%\.nightshift\`.
