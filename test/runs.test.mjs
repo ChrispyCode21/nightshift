@@ -1,6 +1,23 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
-import { decodeLog, formatLock, lockHeld, parseLock, processAlive, runFailure } from '../bin/lib/runs.mjs'
+import {
+  decodeLog,
+  formatLock,
+  lockHeld,
+  parseLock,
+  parseRuns,
+  processAlive,
+  runFailure,
+  runRecord,
+  summarizeRun,
+} from '../bin/lib/runs.mjs'
+
+const PREFLIGHT = fileURLToPath(new URL('../bin/preflight.mjs', import.meta.url))
 
 const CUT_OFF =
   'Background tasks still running 10m after the last turn (subagent "Tier 3 build issue 130"); stopping them. Set CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 to wait indefinitely.'
@@ -48,4 +65,111 @@ test('lockHeld: held while young, unless the runner that took it is gone', () =>
 test('processAlive: this process is, a pid that does not exist is not', () => {
   assert.equal(processAlive(process.pid), true)
   assert.equal(processAlive(2 ** 22 + 12345), false)
+})
+
+const START = '2026-10-22T10:00:00.000Z'
+const END = '2026-10-22T10:00:41.000Z'
+const summarize = (stdout) => summarizeRun(stdout, { start: START, end: END })
+
+test('summarizeRun: the last lines, the refs and the duration of a plain log', () => {
+  const log = 'Reviewed things.\nPR 12 for issue 130: merged\nPR 13: held\nPR 14: fixed\n\n'
+  assert.deepEqual(summarize(log), {
+    durationSeconds: 41,
+    summary: 'PR 12 for issue 130: merged PR 13: held PR 14: fixed',
+    refs: ['PR 12', 'issue 130', 'PR 13', 'PR 14'],
+  })
+})
+
+test('summarizeRun: UTF-16 logs read the same, an empty log is (no output)', () => {
+  const text = 'Built issue 7, opened PR 9\n'
+  const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')])
+  assert.deepEqual(summarize(decodeLog(utf16)), summarize(text))
+  assert.deepEqual(summarize(''), { durationSeconds: 41, summary: '(no output)', refs: [] })
+  assert.equal(summarizeRun('x', { start: 'not a date' }).durationSeconds, null)
+})
+
+test('summarizeRun: refs include #n and GitHub URLs; a cut-off log keeps its last lines', () => {
+  const log = `See #5 and https://github.com/o/r/pull/8\n${CUT_OFF}\n`
+  const { refs, summary } = summarize(log)
+  assert.deepEqual(refs, ['#5', 'github.com/o/r/pull/8', 'issue 130'])
+  assert.match(summary, /Background tasks still running/)
+})
+
+test('summarizeRun: truncated, and only printable ASCII, whatever the run printed', () => {
+  const { summary } = summarize(
+    `\x1b[31mred\x1b[0m \x1b]0;title\x07 em — dash … café\nfake [x finished (0)]\n${'x'.repeat(400)}`,
+  )
+  assert.ok(summary.length <= 160)
+  assert.match(summary, /^[\x20-\x7e]+$/)
+  const small = summarize('\x1b[31mred\x1b[0m \x1b]0;title\x07 em — dash … café\r\nnext')
+  assert.equal(small.summary, 'red em - dash ... caf? next')
+})
+
+test('outcome logic: stderr never becomes the summary, but a cut-off only in stderr still fails', () => {
+  const stdout = 'PR 3: merged\n'
+  const stderr = `${CUT_OFF}\n`
+  assert.equal(summarize(stdout).summary, 'PR 3: merged')
+  assert.match(runFailure({ exitCode: 0, log: `${stdout}\n${stderr}` }), /cut the run off/)
+})
+
+test('runRecord: finished, failed and timed-out; the reason is ASCII', () => {
+  const base = {
+    start: START,
+    end: END,
+    repo: 'foo',
+    agent: 'review',
+    exitCode: 0,
+    durationSeconds: 41,
+    refs: [],
+    log: 'a.log',
+  }
+  assert.equal(runRecord({ ...base, failure: null }).outcome, 'finished')
+  assert.equal(runRecord({ ...base, failure: null }).reason, null)
+  assert.equal(runRecord({ ...base, failure: 'timed out' }).outcome, 'timed-out')
+  const failed = runRecord({ ...base, exitCode: 1, failure: 'exit code 1 …' })
+  assert.deepEqual([failed.outcome, failed.reason], ['failed', 'exit code 1 ...'])
+})
+
+test('parseRuns: a corrupt line is skipped', () => {
+  const text = `${JSON.stringify({ repo: 'a' })}\n{oops\n\n42\n${JSON.stringify({ repo: 'b' })}\n`
+  assert.deepEqual(parseRuns(text), [{ repo: 'a' }, { repo: 'b' }])
+})
+
+test('preflight outcome: one run appends exactly one parseable line to runs.jsonl', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nightshift-'))
+  try {
+    const log = join(dir, 'foo-review-20261022-100000.log')
+    writeFileSync(log, 'PR 3 for issue 2: merged\n')
+    writeFileSync(`${log}.err`, `${CUT_OFF}\n`)
+    writeFileSync(join(dir, 'runs.jsonl'), 'not json\n')
+    const args = [
+      '--exit',
+      '0',
+      '--log',
+      log,
+      '--err',
+      `${log}.err`,
+      '--start',
+      START,
+      '--repo',
+      'foo',
+      '--agent',
+      'review',
+    ]
+    const run = spawnSync(process.execPath, [PREFLIGHT, 'outcome', ...args], {
+      env: { ...process.env, NIGHTSHIFT_HOME: dir },
+      encoding: 'utf8',
+    })
+    assert.equal(run.status, 10) // the cut-off is in stderr only
+    assert.match(JSON.parse(run.stdout).summary, /^PR 3 for issue 2: merged$/)
+    const records = parseRuns(readFileSync(join(dir, 'runs.jsonl'), 'utf8'))
+    assert.equal(records.length, 1)
+    assert.equal(readFileSync(join(dir, 'runs.jsonl'), 'utf8').trim().split('\n').length, 2) // + the corrupt one
+    assert.deepEqual(
+      [records[0].repo, records[0].agent, records[0].outcome, records[0].log],
+      ['foo', 'review', 'failed', 'foo-review-20261022-100000.log'],
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

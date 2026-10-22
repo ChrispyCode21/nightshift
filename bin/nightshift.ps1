@@ -192,7 +192,7 @@ switch ($Command) {
     Write-Output "`nWatcher: $(if ($task) { $task.State } else { 'not installed' })"
     Write-Output "GitHub:  $(if (Test-Path $NsToken) { 'the nightshift token' } else { 'your own gh login (nightshift.ps1 token narrows it)' })"
     $log = Join-Path $NsHome 'logs\nightshift.log'
-    if (Test-Path $log) { Write-Output "`nRecent:"; Get-Content $log -Tail 8 }
+    if (Test-Path $log) { Write-Output "`nRecent:"; Get-Content $log -Tail 15 }
   }
   'trigger' {
     if ($Agent -notin 'build', 'review') { Fail 'Usage: trigger <name> build|review [-Now]' }

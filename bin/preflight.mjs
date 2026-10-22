@@ -8,7 +8,8 @@
 //   node preflight.mjs build|review --repo <name> [--claim | --ignore-lock]
 //   node preflight.mjs release build|review --repo <name>     drop that run's lock
 //   node preflight.mjs lock build|review --repo <name>        exit 10 while a run holds the lock
-//   node preflight.mjs outcome --exit <code> --log <file> [--timed-out]   exit 10 if a run failed
+//   node preflight.mjs outcome --exit <code> --log <file> [--err <file>] --start <iso> --repo <name>
+//     --agent build|review [--timed-out]    exit 10 if a run failed; appends the run to runs.jsonl
 //
 // Prints one JSON object (with the repo's resolved config when there's work). Exit 0: there's work
 // (`status: "work"`); 10: nothing to do (`status: "idle"`, with `reason`); 1: it failed.
@@ -16,8 +17,8 @@
 // triggered one never overlap; --ignore-lock is for the run holding it, to check again. A lock
 // goes stale after LOCK_HOURS, or at once when trigger.ps1 took it and its process has gone.
 import { execFileSync, execSync } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import { CONFIG_PATH, home, loadRegistry, resolveRepo } from './lib/config.mjs'
 import {
   buildCandidates,
@@ -33,7 +34,7 @@ import {
 } from './lib/gates.mjs'
 import { githubEnv } from './lib/github.mjs'
 import { lockHolder, lockPath } from './lib/locks.mjs'
-import { decodeLog, formatLock, runFailure } from './lib/runs.mjs'
+import { decodeLog, formatLock, runFailure, runRecord, summarizeRun } from './lib/runs.mjs'
 
 // Git reports "dubious ownership" for checkouts on drives that don't record owners (exFAT).
 const env = {
@@ -225,10 +226,35 @@ try {
     rmSync(lockPath(option('--repo'), agent), { force: true })
     process.exit(0)
   } else if (mode === 'outcome') {
-    // A finished headless run: idle (exit 10) with the reason when it didn't finish its work.
-    const log = decodeLog(readFileSync(option('--log')))
-    const reason = runFailure({ exitCode: Number(option('--exit')), timedOut: flag('--timed-out'), log })
-    result = reason ? idle(reason) : { status: 'work', reason: 'Finished.' }
+    // A finished headless run: idle (exit 10) with the reason when it didn't finish its work. The
+    // summary comes from the log (stdout) alone; failures are looked for in stderr too.
+    const logFile = option('--log')
+    const stdout = decodeLog(readFileSync(logFile))
+    const errFile = option('--err')
+    const stderr = errFile && existsSync(errFile) ? decodeLog(readFileSync(errFile)) : ''
+    const exitCode = Number(option('--exit'))
+    const failure = runFailure({ exitCode, timedOut: flag('--timed-out'), log: `${stdout}\n${stderr}` })
+    const end = new Date().toISOString()
+    const { durationSeconds, summary, refs } = summarizeRun(stdout, { start: option('--start'), end })
+    const record = runRecord({
+      start: option('--start') ?? null,
+      end,
+      repo: option('--repo') ?? null,
+      agent: option('--agent') ?? null,
+      exitCode,
+      failure,
+      durationSeconds,
+      refs,
+      log: basename(logFile),
+    })
+    mkdirSync(home(), { recursive: true })
+    appendFileSync(
+      join(home(), 'runs.jsonl'),
+      `${JSON.stringify(record)}
+`,
+    )
+    const detail = { summary, durationSeconds }
+    result = failure ? idle(record.reason, detail) : { status: 'work', reason: 'Finished.', ...detail }
   } else if (mode === 'lock') {
     if (!['build', 'review'].includes(agent) || !option('--repo'))
       throw new Error('Usage: lock build|review --repo <name>')
