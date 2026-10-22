@@ -19,6 +19,21 @@ test('defaults: every repo starts opted out of the optional features', () => {
   assert.equal(d.standards.baseline, true)
 })
 
+test('defaults: the builder skips issues that are waiting, followed up, questions or on hold', () => {
+  assert.deepEqual(defaults().builder.skipLabels, [
+    'agent-needs-info',
+    'agent-followup',
+    'question',
+    'on-hold',
+  ])
+})
+
+test("merge: a repo's own skipLabels replaces the default list, so it must name on-hold itself", () => {
+  const merged = merge(defaults(), { builder: { skipLabels: ['question'] } })
+  assert.deepEqual(merged.builder.skipLabels, ['question'])
+  assert.equal(merged.builder.milestones, 'semver')
+})
+
 let dir
 before(() => {
   dir = mkdtempSync(join(tmpdir(), 'nightshift-'))
