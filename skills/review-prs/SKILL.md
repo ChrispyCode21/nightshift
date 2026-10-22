@@ -76,3 +76,5 @@ When `config.standards.baseline` is true and there are **Standards** findings: f
 **What you write on GitHub is public and unreviewed until the owner reads it:** no environment variables, tokens or personal details; command output quoted only as far as needed; short comments.
 
 At the end, one line per PR: merged, held (why), or ready for the owner (why), plus issues created and standards items added. If a run stops part way through a PR, say which: removing its `reviewed` label makes it due again.
+
+End the reply with one last line that starts `Result:`, for the run log: for example `Result: merged PR 3; held PR 4 (checks failing); ready for owner PR 5 (high risk)`, or `Result: no PRs due`. For several repos, join their results with `; `. Keep it to one short line.
