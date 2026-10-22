@@ -106,3 +106,39 @@ export function processAlive(pid) {
     return error.code === 'EPERM' // it exists, just isn't ours
   }
 }
+
+// A run log's file name: <repo>-<build|review>-<yyyyMMdd>-<HHmmss>.log. nightshift.log, *.prompt
+// and *.err don't match. The repo is whatever precedes the agent, so "foo" never matches the
+// "foo-bar" repo's logs.
+const RUN_LOG = /^(.+)-(build|review)-(\d{8}-\d{6})\.log$/
+
+export function runLogInfo(fileName) {
+  const m = RUN_LOG.exec(fileName)
+  return m ? { repo: m[1], agent: m[2], stamp: m[3] } : null
+}
+
+// The newest run log among `fileNames`, for one repo or any, by the stamp in the name (not the
+// file name, which sorts by repo first); or null.
+export function newestLog(fileNames, repo) {
+  const logs = fileNames
+    .map((name) => ({ name, info: runLogInfo(name) }))
+    .filter(({ info }) => info && (!repo || info.repo === repo))
+    .sort((a, b) => (a.info.stamp < b.info.stamp ? -1 : a.info.stamp > b.info.stamp ? 1 : 0))
+  return logs.length ? logs[logs.length - 1].name : null
+}
+
+const pad = (n) => String(n).padStart(2, '0')
+
+// One runs.jsonl record as a line of `nightshift.ps1 logs -List`: local time, repo, agent,
+// outcome, duration, the PRs and issues it named, the log file.
+export function formatRun(record) {
+  const at = new Date(record.start)
+  const time = Number.isNaN(at.getTime())
+    ? '????-??-?? ??:??'
+    : `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`
+  const seconds = Number.isFinite(record.durationSeconds) ? `${record.durationSeconds}s` : '-'
+  const refs = Array.isArray(record.refs) && record.refs.length ? record.refs.join(', ') : '-'
+  return [time, record.repo, record.agent, record.outcome, seconds, refs, record.log]
+    .map((field) => toAscii(field ?? '-'))
+    .join('  ')
+}

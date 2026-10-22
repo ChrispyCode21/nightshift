@@ -5,14 +5,15 @@
 #   nightshift.ps1 unregister <name>          removes the hook and the entry, leaves the checkouts
 #   nightshift.ps1 enable|disable <name>      pauses a repo without touching its code
 #   nightshift.ps1 status                     the registered repos, the watcher and recent log lines
-#   nightshift.ps1 trigger <name> build|review [-Now]
+#   nightshift.ps1 trigger <name> build|review [-Now]   prints what it does as it goes
+#   nightshift.ps1 logs [<name>] [-List]      the newest run log (for one repo), or the last 20 runs
 #   nightshift.ps1 watch [-Off]               the 30-minute watcher (a Windows scheduled task)
 #   nightshift.ps1 tick                       one watcher pass: Tier 0 for every enabled repo
 #   nightshift.ps1 token [-Off]               the fine-grained GitHub token the agents use
 #   nightshift.ps1 tidy [<checkout>] [-DryRun]  deletes merged local branches and their clean worktrees
 param(
   [Parameter(Mandatory, Position = 0)]
-  [ValidateSet('register', 'unregister', 'enable', 'disable', 'status', 'trigger', 'watch', 'tick', 'token', 'tidy')]
+  [ValidateSet('register', 'unregister', 'enable', 'disable', 'status', 'trigger', 'watch', 'tick', 'token', 'tidy', 'logs')]
   [string]$Command,
   [Parameter(Position = 1)][string]$Target,
   [Parameter(Position = 2)][string]$Agent,
@@ -21,6 +22,7 @@ param(
   [string]$Reviewer,
   [switch]$Now,
   [switch]$Off,
+  [switch]$List,
   [switch]$DryRun
 )
 . (Join-Path $PSScriptRoot 'lib\common.ps1')
@@ -197,7 +199,28 @@ switch ($Command) {
   'trigger' {
     if ($Agent -notin 'build', 'review') { Fail 'Usage: trigger <name> build|review [-Now]' }
     Find-Repo $Target | Out-Null
-    & (Join-Path $PSScriptRoot 'trigger.ps1') -Agent $Agent -Repo $Target -Now:$Now
+    # trigger.ps1 echoes its log lines to this terminal; the watcher and the hook leave it unset.
+    $env:NIGHTSHIFT_ECHO = '1'
+    try { & (Join-Path $PSScriptRoot 'trigger.ps1') -Agent $Agent -Repo $Target -Now:$Now }
+    finally { Remove-Item Env:NIGHTSHIFT_ECHO -ErrorAction SilentlyContinue }
+  }
+  'logs' {
+    # Node prints UTF-8; the run's text is data, printed and never executed.
+    [Console]::OutputEncoding = [Text.Encoding]::UTF8
+    $preflight = Join-Path $NsRoot 'bin\preflight.mjs'
+    if ($List) {
+      $runs = node $preflight log --list | Out-String | ConvertFrom-Json
+      if ($runs.status -ne 'work') { Write-Output $runs.reason; break }
+      Write-Output 'time              repo  agent  outcome  duration  refs  log'
+      $runs.lines | ForEach-Object { Write-Output $_ }
+      break
+    }
+    $logArgs = @('log', '--newest')
+    if ($Target) { $logArgs += @('--repo', $Target) }
+    $newest = node $preflight @logArgs | Out-String | ConvertFrom-Json
+    if ($newest.status -ne 'work') { Write-Output $newest.reason; break }
+    Write-Output "== $(Split-Path -Leaf $newest.path)"
+    node $preflight log --file $newest.path
   }
   'watch' {
     if ($Off) {

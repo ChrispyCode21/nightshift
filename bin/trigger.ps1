@@ -33,7 +33,11 @@ $entry = Get-NsRepos | Where-Object { ($Repo -and $_.name -eq $Repo) -or ($Githu
 if (-not $entry) { exit 0 } # not registered: nothing to do
 if ($entry.enabled -eq $false) { exit 0 }
 $name = $entry.name
-function Log($message) { Write-NsLog "[$name $Agent] $message" }
+# From `nightshift.ps1 trigger` the lines also print here; the watcher and the hook run hidden.
+function Log($message) {
+  Write-NsLog "[$name $Agent] $message"
+  if ($env:NIGHTSHIFT_ECHO) { Write-Host "[$name $Agent] $message" }
+}
 if (-not (Use-NsToken)) { Log "couldn't read the nightshift GitHub token; nothing run (nightshift.ps1 token)"; exit 1 }
 $work = if ($Agent -eq 'build' -and $entry.builder) { $entry.builder }
   elseif ($Agent -eq 'review' -and $entry.reviewer) { $entry.reviewer }
@@ -125,6 +129,7 @@ try {
   Set-Content -Encoding utf8 $promptFile $prompt
   Log "running $Skill; log $(Split-Path -Leaf $runLog)"
   New-Item -ItemType File -Force $lastRun | Out-Null
+  if ($env:NIGHTSHIFT_ECHO) { Write-Host "Running; this can take up to $RunHours hours. 'nightshift logs' shows the log once it finishes." }
 
   # The run takes the lock through preflight.mjs under this pid, so a run that dies without
   # releasing it (killed, or the machine restarted) doesn't hold the repo for hours.
