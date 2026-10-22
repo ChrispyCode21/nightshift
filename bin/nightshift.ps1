@@ -150,11 +150,19 @@ switch ($Command) {
     }
     Save-NsRepos $repos
     Write-NsLog "[$repoName] registered"
+    # Labels belong to one repo. Failing to create them (often a token that doesn't include the repo
+    # yet) only warns: the repo is registered either way.
+    $labelNote = (node (Join-Path $NsRoot 'bin\labels.mjs') $github | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+      Write-NsLog "[$repoName] labels: $labelNote"
+      $labelNote = "WARNING: $labelNote. If the token doesn't include $github yet, add it, then run register again with the same options (this also re-enables a disabled repo)."
+    }
     Write-Output "Registered $repoName ($github)."
     Write-Output "  checkout  $checkout"
     Write-Output "  builder   $builderPath"
     Write-Output "  reviewer  $reviewerPath"
     Write-Output "  hook      $hookNote"
+    Write-Output "  labels    $labelNote"
   }
   'unregister' {
     $entry = Find-Repo $Target

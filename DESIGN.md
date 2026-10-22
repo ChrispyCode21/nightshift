@@ -100,9 +100,15 @@ Two keys, both required:
 }
 ```
 
-`nightshift register <checkout>` reads the repo's config (refusing if there's none), creates the builder's clone and the reviewer's worktree, installs the pre-push hook (in the repo's `.git/hooks`; a repo that sets `core.hooksPath`, or already has a pre-push hook, calls the launcher from its own instead), and adds the entry. Hooks and scheduled tasks call `run.ps1` in the nightshift home, which finds the plugin's current install folder, so they survive plugin updates. `unregister` removes the hook and the entry and leaves the checkouts. `enabled: false` pauses a repo without touching its code.
+`nightshift register <checkout>` reads the repo's config (refusing if there's none), creates the builder's clone and the reviewer's worktree, installs the pre-push hook (in the repo's `.git/hooks`; a repo that sets `core.hooksPath`, or already has a pre-push hook, calls the launcher from its own instead), adds the entry, and creates the standard labels in the GitHub repo ("Labels"). Hooks and scheduled tasks call `run.ps1` in the nightshift home, which finds the plugin's current install folder, so they survive plugin updates. `unregister` removes the hook and the entry and leaves the checkouts. `enabled: false` pauses a repo without touching its code.
 
 A clone or fork that already has the config file runs nothing until it's registered.
+
+### Labels
+
+GitHub labels are per repository (there are no account-wide labels), and labels added by name before they existed ended up with no color or description. So `register` creates the standard ones (`bin/lib/labels.mjs`, run by `bin/labels.mjs` with the nightshift token like every other gh call): `on-hold`, `agent-needs-info` (added by the builder when it asks questions), `agent-followup` (the reviewer's issues for out-of-scope findings), `standards` (the rolling standards issue), `touches-data` and `touches-gates` (the labels the examples above list in `ownerMerges.labels` and `highRisk.labels`; both lists are empty by default), `reviewed` (on every PR the reviewer has seen), `nightshift` (the builder's issues when `milestones` is `"none"`) and `question`. A label that exists, in any capitalisation, is left alone; one that can't be created is a warning, never a failed registration, and running `register` again with the same options (`-Name`, `-Builder`, `-Reviewer`) retries, and re-enables a repo that was disabled.
+
+`on-hold` is how an issue is paused: `builder.skipLabels` lists the labels whose issues the builder skips and reports as waiting. Only that issue is paused; `enabled: false` pauses the whole repo. A repo's own `builder.skipLabels` replaces the default list (arrays replace, objects merge), so it must include `on-hold` itself.
 
 ## The config file
 
@@ -151,6 +157,7 @@ Defaults when a field is absent:
 | Field | Default | Effect |
 |---|---|---|
 | `builder.milestones` | `"semver"` | build from the lowest open `vX.Y.Z` milestone. `"any"`: the oldest open milestone; `"none"`: open issues labeled `nightshift`. |
+| `builder.skipLabels` | `["agent-needs-info", "agent-followup", "question", "on-hold"]` | the builder skips an issue with any of these labels. A repo's own list replaces this one, so include `on-hold` in it. |
 | `builder.docs` | `["README.md", "CLAUDE.md"]` if present | what Tier 1 reads before planning |
 | `builder.spec` | none | no spec: the issue alone is the spec, and decisions are recorded on the issue |
 | `builder.workedExamples` | none | no number tables to approve |
@@ -240,6 +247,7 @@ nightshift/
     preflight.mjs          Tier 0: reads GitHub, the registry and the repo's config
     lib/gates.mjs          Tier 0's rules as pure functions, unit-tested
     updates.mjs            the watcher's update questions; rules in lib/updates.mjs
+    labels.mjs             creates the standard labels in a repo; rules in lib/labels.mjs
     tidy.mjs               deletes merged local branches and their clean worktrees; rules in lib/tidy.mjs
     lib/locks.mjs          the builder's and reviewer's lock files
     lib/config.mjs         the registry, the config and its defaults

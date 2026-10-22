@@ -4,7 +4,7 @@
     "milestones": "semver",
     "authors": "owner",
     "branchPrefix": "agent/issue-",
-    "skipLabels": ["agent-needs-info", "agent-followup", "question"],
+    "skipLabels": ["agent-needs-info", "agent-followup", "question", "on-hold"],
     "docs": ["README.md", "CLAUDE.md"],
     "spec": null,
     "workedExamples": null,
