@@ -267,3 +267,19 @@ test('preflight log --newest and --list: the newest log, the last 20 runs, and a
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('summarizeRun: the last "Result:" line is the summary, markdown and all; without one, the last lines', () => {
+  const log = [
+    'Tier 2 is reviewing. I am waiting.',
+    '',
+    '| R4 | Puppy, 10,000 | day 296 |',
+    '**Result:** need answers on issue #5',
+    'Result: built PR 12 for issue 5',
+    '',
+  ].join('\n')
+  assert.equal(summarize(log).summary, 'built PR 12 for issue 5')
+  assert.equal(summarize('**Result: need answers on issue #5**\n').summary, 'need answers on issue #5')
+  assert.equal(summarize('no result here\nPR 3: merged').summary, 'no result here PR 3: merged')
+  assert.equal(summarize('Result:\nPR 3: merged').summary, 'Result: PR 3: merged')
+  assert.deepEqual(summarize(log).refs, ['#5', 'PR 12', 'issue 5'])
+})

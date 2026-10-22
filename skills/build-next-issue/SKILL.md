@@ -89,3 +89,5 @@ Never merge (the reviewer does) and never push to the default branch.
 ## 8. Report
 
 Release the repo's lock, then one line per repo: the PR opened (number and issue), the questions asked (which issues), or why nothing was built.
+
+End the reply with one last line that starts `Result:`, for the run log: `Result: built PR <n> for issue <m>`, `Result: need answers on issue <m>` or `Result: nothing built: <why>`. For several repos, join their results with `; `. Keep it to one short line.

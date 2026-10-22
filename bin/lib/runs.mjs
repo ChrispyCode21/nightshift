@@ -47,15 +47,19 @@ const SUMMARY_LINES = 3
 const SUMMARY_CHARS = 160
 const MAX_REFS = 20
 
-// From a run's stdout (the coordinator's final reply; never stderr): the last few non-empty lines
-// as one short line (the review report is one line per PR), the PRs and issues it names, and how
-// long the run took.
+// The skills end their reply with "Result: <what happened>"; the last such line says it best.
+const RESULT_LINE = /^[\s*_>`-]*Result:[ \t*_]*(\S.*)$/gim
+
+// From a run's stdout (the coordinator's final reply; never stderr): its "Result:" line, or else
+// the last few non-empty lines, as one short line; the PRs and issues it names; and how long the
+// run took.
 export function summarizeRun(stdout, { start, end = new Date() } = {}) {
   const lines = stdout.split(/\r?\n/).filter((line) => line.trim())
+  const result = [...stdout.matchAll(RESULT_LINE)].at(-1)?.[1]?.replace(/[*_ ]+$/, '')
   const seconds = (new Date(end) - new Date(start)) / 1000
   return {
     durationSeconds: Number.isFinite(seconds) ? Math.max(0, Math.round(seconds)) : null,
-    summary: toAscii(lines.slice(-SUMMARY_LINES).join(' '), SUMMARY_CHARS) || '(no output)',
+    summary: toAscii(result ?? lines.slice(-SUMMARY_LINES).join(' '), SUMMARY_CHARS) || '(no output)',
     refs: [...new Set(toAscii(stdout).match(REF) ?? [])].slice(0, MAX_REFS),
   }
 }
