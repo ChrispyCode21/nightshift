@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -8,7 +8,9 @@ import { test } from 'node:test'
 import {
   decodeLog,
   formatLock,
+  formatRun,
   lockHeld,
+  newestLog,
   parseLock,
   parseRuns,
   processAlive,
@@ -169,6 +171,98 @@ test('preflight outcome: one run appends exactly one parseable line to runs.json
       [records[0].repo, records[0].agent, records[0].outcome, records[0].log],
       ['foo', 'review', 'failed', 'foo-review-20261022-100000.log'],
     )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('newestLog: picks the newest by stamp, per repo, and never nightshift.log, .prompt or .err', () => {
+  const files = [
+    'foo-build-20261021-230000.log',
+    'foo-review-20261022-040000.log',
+    'foo-bar-review-20261022-050000.log',
+    'foo-review-20261022-040000.log.err',
+    'foo-review-20261022-060000.prompt',
+    'nightshift.log',
+    'zzz-build-20261020-010000.log',
+  ]
+  assert.equal(newestLog(files, 'foo'), 'foo-review-20261022-040000.log')
+  assert.equal(newestLog(files, 'foo-bar'), 'foo-bar-review-20261022-050000.log')
+  assert.equal(newestLog(files), 'foo-bar-review-20261022-050000.log')
+  assert.equal(newestLog(files, 'nope'), null)
+  assert.equal(newestLog(['nightshift.log']), null)
+})
+
+test('formatRun: one ASCII line per record, with placeholders for what is missing', () => {
+  const line = formatRun({
+    start: START,
+    repo: 'foo',
+    agent: 'review',
+    outcome: 'finished',
+    durationSeconds: 41,
+    refs: ['PR 3', 'issue 2'],
+    log: 'a.log',
+  })
+  assert.match(
+    line,
+    /^\d{4}-\d\d-\d\d \d\d:\d\d {2}foo {2}review {2}finished {2}41s {2}PR 3, issue 2 {2}a\.log$/,
+  )
+  assert.match(
+    formatRun({ repo: 'foo', refs: [] }),
+    /^\?\?\?\?-\?\?-\?\? \?\?:\?\? {2}foo {2}- {2}- {2}- {2}- {2}-$/,
+  )
+})
+
+const preflight = (home, ...args) =>
+  spawnSync(process.execPath, [PREFLIGHT, 'log', ...args], {
+    env: { ...process.env, NIGHTSHIFT_HOME: home },
+    encoding: 'utf8',
+  })
+
+test('preflight log --file prints a UTF-8 log and a UTF-16 log with a BOM identically', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nightshift-'))
+  try {
+    const text = 'PR 3 \u2014 merged \u2026 caf\u00e9\nline two\n'
+    const utf8 = join(dir, 'a.log')
+    const utf16 = join(dir, 'b.log')
+    writeFileSync(utf8, text)
+    writeFileSync(utf16, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')]))
+    assert.equal(preflight(dir, '--file', utf8).stdout, text)
+    assert.equal(preflight(dir, '--file', utf16).stdout, text)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('preflight log --newest and --list: the newest log, the last 20 runs, and a message when empty', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nightshift-'))
+  try {
+    const empty = preflight(dir, '--newest')
+    assert.equal(empty.status, 10)
+    assert.match(JSON.parse(empty.stdout).reason, /No run logs yet/)
+    assert.match(JSON.parse(preflight(dir, '--list').stdout).reason, /No runs recorded yet/)
+
+    mkdirSync(join(dir, 'logs'))
+    for (const name of [
+      'foo-build-20261021-230000.log',
+      'foo-bar-review-20261022-050000.log',
+      'nightshift.log',
+    ])
+      writeFileSync(join(dir, 'logs', name), 'x')
+    assert.match(
+      JSON.parse(preflight(dir, '--newest', '--repo', 'foo').stdout).path,
+      /foo-build-20261021-230000\.log$/,
+    )
+    assert.equal(preflight(dir, '--newest', '--repo', 'nope').status, 10)
+
+    const records = Array.from({ length: 25 }, (_, i) =>
+      JSON.stringify({ start: START, repo: `r${i}`, log: `r${i}.log` }),
+    )
+    writeFileSync(join(dir, 'runs.jsonl'), `${records.join('\n')}\n{corrupt\n`)
+    const { lines } = JSON.parse(preflight(dir, '--list').stdout)
+    assert.equal(lines.length, 20)
+    assert.match(lines[19], /r24/)
+    assert.doesNotMatch(lines[0], /r4 /)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

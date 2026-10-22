@@ -49,7 +49,8 @@ The builder skips issues labeled `agent-needs-info`, `agent-followup`, `question
 | `unregister <name>` | removes the hook and the entry; leaves the checkouts |
 | `enable` / `disable <name>` | pauses a repo without touching its code |
 | `status` | the registered repos, the watcher, and the last 15 log lines (each run ends with what it did) |
-| `trigger <name> build\|review` | runs one agent for one repo now, if Tier 0 finds work |
+| `trigger <name> build\|review` | runs one agent for one repo now, if Tier 0 finds work, and prints what it does as it goes |
+| `logs [<name>]` / `logs -List` | prints the newest run log (for one repo), or lists the last 20 runs from `runs.jsonl` |
 | `watch` / `watch -Off` | installs or removes the 30-minute watcher |
 | `token` / `token -Off` | sets or removes the fine-grained GitHub token the agents use |
 | `tidy [<checkout>] [-DryRun]` | deletes local branches whose work is on `main` and their clean worktrees; the watcher runs it nightly after 9 PM (DESIGN.md, "Tidying checkouts") |

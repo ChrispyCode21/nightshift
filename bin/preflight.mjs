@@ -8,6 +8,9 @@
 //   node preflight.mjs build|review --repo <name> [--claim | --ignore-lock]
 //   node preflight.mjs release build|review --repo <name>     drop that run's lock
 //   node preflight.mjs lock build|review --repo <name>        exit 10 while a run holds the lock
+//   node preflight.mjs log --file <path>                      print a run log, UTF-8 or UTF-16
+//   node preflight.mjs log --newest [--repo <name>]           the newest run log's path
+//   node preflight.mjs log --list                             the last 20 runs in runs.jsonl
 //   node preflight.mjs outcome --exit <code> --log <file> [--err <file>] --start <iso> --repo <name>
 //     --agent build|review [--timed-out]    exit 10 if a run failed; appends the run to runs.jsonl
 //
@@ -17,7 +20,15 @@
 // triggered one never overlap; --ignore-lock is for the run holding it, to check again. A lock
 // goes stale after LOCK_HOURS, or at once when trigger.ps1 took it and its process has gone.
 import { execFileSync, execSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { basename, join } from 'node:path'
 import { CONFIG_PATH, home, loadRegistry, resolveRepo } from './lib/config.mjs'
 import {
@@ -34,7 +45,16 @@ import {
 } from './lib/gates.mjs'
 import { githubEnv } from './lib/github.mjs'
 import { lockHolder, lockPath } from './lib/locks.mjs'
-import { decodeLog, formatLock, runFailure, runRecord, summarizeRun } from './lib/runs.mjs'
+import {
+  decodeLog,
+  formatLock,
+  formatRun,
+  newestLog,
+  parseRuns,
+  runFailure,
+  runRecord,
+  summarizeRun,
+} from './lib/runs.mjs'
 
 // Git reports "dubious ownership" for checkouts on drives that don't record owners (exFAT).
 const env = {
@@ -225,6 +245,25 @@ try {
       throw new Error('Usage: release build|review --repo <name>')
     rmSync(lockPath(option('--repo'), agent), { force: true })
     process.exit(0)
+  } else if (mode === 'log') {
+    // The run's own text: printed as data, never executed.
+    if (option('--file')) {
+      process.stdout.write(decodeLog(readFileSync(option('--file'))))
+      process.exit(0)
+    }
+    const runsFile = join(home(), 'runs.jsonl')
+    if (flag('--list')) {
+      const records = existsSync(runsFile) ? parseRuns(readFileSync(runsFile, 'utf8')) : []
+      result = records.length
+        ? { status: 'work', reason: 'Recent runs.', lines: records.slice(-20).map(formatRun) }
+        : idle('No runs recorded yet.')
+    } else {
+      const dir = join(home(), 'logs')
+      const name = newestLog(existsSync(dir) ? readdirSync(dir) : [], option('--repo'))
+      result = name
+        ? { status: 'work', reason: 'Newest run log.', path: join(dir, name) }
+        : idle(option('--repo') ? `No run logs for ${option('--repo')} yet.` : 'No run logs yet.')
+    }
   } else if (mode === 'outcome') {
     // A finished headless run: idle (exit 10) with the reason when it didn't finish its work. The
     // summary comes from the log (stdout) alone; failures are looked for in stderr too.
