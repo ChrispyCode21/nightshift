@@ -17,17 +17,7 @@
 // triggered one never overlap; --ignore-lock is for the run holding it, to check again. A lock
 // goes stale after LOCK_HOURS, or at once when trigger.ps1 took it and its process has gone.
 import { execFileSync, execSync } from 'node:child_process'
-import {
-  appendFileSync,
-  closeSync,
-  existsSync,
-  fstatSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { CONFIG_PATH, home, loadRegistry, resolveRepo } from './lib/config.mjs'
 import {
@@ -43,17 +33,9 @@ import {
   usageFromStream,
 } from './lib/gates.mjs'
 import { githubEnv } from './lib/github.mjs'
-import {
-  decodeLog,
-  formatLock,
-  lockHeld,
-  processAlive,
-  runFailure,
-  runRecord,
-  summarizeRun,
-} from './lib/runs.mjs'
+import { lockHolder, lockPath } from './lib/locks.mjs'
+import { decodeLog, formatLock, runFailure, runRecord, summarizeRun } from './lib/runs.mjs'
 
-const LOCK_HOURS = 4
 // Git reports "dubious ownership" for checkouts on drives that don't record owners (exFAT).
 const env = {
   ...process.env,
@@ -88,25 +70,6 @@ function github(repo) {
         return false
       }
     },
-  }
-}
-
-const lockPath = (name, agent) => join(home(), 'locks', `${name}-${agent}.lock`)
-
-// Who holds the lock, or null. One file handle for the age and the text, so they agree.
-function lockHolder(path) {
-  let fd
-  try {
-    fd = openSync(path, 'r')
-  } catch {
-    return null
-  }
-  try {
-    const ageHours = (Date.now() - fstatSync(fd).mtimeMs) / 3_600_000
-    const text = readFileSync(fd, 'utf8').trim()
-    return lockHeld(text, { ageHours, maxHours: LOCK_HOURS, isAlive: processAlive }) ? text : null
-  } finally {
-    closeSync(fd)
   }
 }
 

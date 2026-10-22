@@ -33,6 +33,29 @@ The same mechanics Logtelligent uses now (its PIPELINE.md, "Tiers" and "Triggers
 
 **Long runs.** `claude -p` ends its session when the coordinator ends its turn, and stops any subagent still in the background 10 minutes later ("Background tasks still running…"), which cuts a Tier 3 build off before it is pushed. `trigger.ps1` raises that wait to 70 minutes (`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`) and kills a run after 3 hours. It exports its own pid for the lock (`pid N (runner)`), so a lock whose launcher has died is stale at once instead of after 4 hours, and it releases the lock when the run ends however it ends. A run is logged `finished (0) in 41s: <summary>` only if it exited 0 and neither its log nor its stderr shows Claude Code cut it off (`runFailure` in `lib/runs.mjs`); otherwise `failed: <why> in 41s`, and the 3-hour cool-down applies. The `outcome` step writes both that line and one record in `runs.jsonl` (start, end, repo, agent, exit code, outcome, duration, the PRs and issues named, log file name). The summary is the last few lines of stdout, never stderr, cut to printable ASCII: it is text from a run that read issues and PRs, so it is only printed, never executed or fed back to a model.
 
+## Tidying checkouts
+
+GitHub deletes a PR's branch when it merges (auto-delete is on for the registered repos), but git never deletes local branches or worktrees, and every Claude session leaves its own behind. nightshift already cleans up after its own runs; `nightshift tidy` does the same for the owner's checkouts.
+
+`nightshift.ps1 tidy [<checkout>] [-DryRun]`: with no path it tidies every enabled registered repo's checkout and builder clone; with a path it tidies that checkout, registered or not (like nightshift's own). For each checkout it runs `git fetch --prune origin`, then looks at every local branch other than origin's default branch and deletes it (`git branch -D`) when nothing on it would be lost:
+
+- **Its PR merged.** The branch isn't on origin any more, GitHub has a merged PR from it, and every commit on the branch that isn't in `origin/main` is one of that PR's commits, or the branch's tree is the PR head's tree. Squash and rebase merges are why it asks GitHub: `git branch -d` refuses those branches because `main` has different commits with the same content.
+- **Or it's already in `origin/main`.** The branch isn't on origin and its tip is an ancestor of `origin/main`. Sessions leave these behind when they switch branches partway through.
+
+It keeps, and reports, everything else. That covers a branch still on origin, one with an open PR, one with commits beyond its merged PR, one with commits not in `origin/main` and no merged PR (never pushed, or its PR closed unmerged), and every branch when GitHub can't be read and the branch isn't already in `origin/main`. It also keeps the branch the checkout itself is on. When that branch would otherwise go, the report says to switch the checkout to `main`, or it's kept every night.
+
+Worktrees:
+
+- **`.claude/worktrees/`** belongs to Claude desktop sessions, and the app removes a session's worktree when it archives the session. `tidy` never removes one, even an idle one: a resumed session would find it gone. Their branches are kept while the worktree exists and go by the rules above once the app has removed it.
+- **Any other worktree** on a branch that would go is removed with `git worktree remove` (never `--force`), then its branch is deleted. It's left alone, with a report, when it's in use: it has changes (`git status --porcelain`), it's locked, or its `index`, `HEAD` or HEAD's reflog changed in the last day. A worktree on a detached HEAD, like the reviewer's, has no branch and is never touched.
+- `git worktree prune` drops the records of worktree folders that are already gone, so their branches can go too.
+
+One line per checkout goes to `nightshift.log`: `tidied N branches, M worktrees; kept K (why)`. `-DryRun` prints what it would do, logs nothing and changes nothing but origin's remote-tracking refs (the fetch).
+
+**Locks and GitHub.** A registered repo with a builder or reviewer lock is skipped for the day, so `tidy` never changes a checkout under a run. A dry run reports the lock and still shows what it would do. A registered repo is read with the nightshift token, like Tier 0. An unregistered checkout probably isn't on that token, so it uses the owner's own gh login, which `tidy` only reads PRs with.
+
+**Daily run.** The watcher runs `tidy` for the registered repos once a day, on its first `tick` after 9 PM local, before that pass starts any run. That way it never pulls a branch out from under a daytime session, and it's done before the 2 AM builder. `last-run\<repo>-tidy` in the nightshift home records the day's run. The rules are `bin/lib/tidy.mjs` (unit-tested in `test/tidy.test.mjs`); `bin/tidy.mjs` reads git and GitHub and acts on them.
+
 ## GitHub access
 
 The agents act as you on GitHub, and everything they read in issues, comments and PRs is untrusted text. Two limits keep text that tries to steer them from reaching more than PRs and issues:
@@ -77,9 +100,15 @@ Two keys, both required:
 }
 ```
 
-`nightshift register <checkout>` reads the repo's config (refusing if there's none), creates the builder's clone and the reviewer's worktree, installs the pre-push hook (in the repo's `.git/hooks`; a repo that sets `core.hooksPath`, or already has a pre-push hook, calls the launcher from its own instead), and adds the entry. Hooks and scheduled tasks call `run.ps1` in the nightshift home, which finds the plugin's current install folder, so they survive plugin updates. `unregister` removes the hook and the entry and leaves the checkouts. `enabled: false` pauses a repo without touching its code.
+`nightshift register <checkout>` reads the repo's config (refusing if there's none), creates the builder's clone and the reviewer's worktree, installs the pre-push hook (in the repo's `.git/hooks`; a repo that sets `core.hooksPath`, or already has a pre-push hook, calls the launcher from its own instead), adds the entry, and creates the standard labels in the GitHub repo ("Labels"). Hooks and scheduled tasks call `run.ps1` in the nightshift home, which finds the plugin's current install folder, so they survive plugin updates. `unregister` removes the hook and the entry and leaves the checkouts. `enabled: false` pauses a repo without touching its code.
 
 A clone or fork that already has the config file runs nothing until it's registered.
+
+### Labels
+
+GitHub labels are per repository (there are no account-wide labels), and labels added by name before they existed ended up with no color or description. So `register` creates the standard ones (`bin/lib/labels.mjs`, run by `bin/labels.mjs` with the nightshift token like every other gh call): `on-hold`, `agent-needs-info` (added by the builder when it asks questions), `agent-followup` (the reviewer's issues for out-of-scope findings), `standards` (the rolling standards issue), `touches-data` and `touches-gates` (the labels the examples above list in `ownerMerges.labels` and `highRisk.labels`; both lists are empty by default), `reviewed` (on every PR the reviewer has seen), `nightshift` (the builder's issues when `milestones` is `"none"`) and `question`. A label that exists, in any capitalisation, is left alone; one that can't be created is a warning, never a failed registration, and running `register` again with the same options (`-Name`, `-Builder`, `-Reviewer`) retries, and re-enables a repo that was disabled.
+
+`on-hold` is how an issue is paused: `builder.skipLabels` lists the labels whose issues the builder skips and reports as waiting. Only that issue is paused; `enabled: false` pauses the whole repo. A repo's own `builder.skipLabels` replaces the default list (arrays replace, objects merge), so it must include `on-hold` itself.
 
 ## The config file
 
@@ -128,6 +157,7 @@ Defaults when a field is absent:
 | Field | Default | Effect |
 |---|---|---|
 | `builder.milestones` | `"semver"` | build from the lowest open `vX.Y.Z` milestone. `"any"`: the oldest open milestone; `"none"`: open issues labeled `nightshift`. |
+| `builder.skipLabels` | `["agent-needs-info", "agent-followup", "question", "on-hold"]` | the builder skips an issue with any of these labels. A repo's own list replaces this one, so include `on-hold` in it. |
 | `builder.docs` | `["README.md", "CLAUDE.md"]` if present | what Tier 1 reads before planning |
 | `builder.spec` | none | no spec: the issue alone is the spec, and decisions are recorded on the issue |
 | `builder.workedExamples` | none | no number tables to approve |
@@ -216,10 +246,14 @@ nightshift/
   bin/
     preflight.mjs          Tier 0: reads GitHub, the registry and the repo's config
     lib/gates.mjs          Tier 0's rules as pure functions, unit-tested
+    updates.mjs            the watcher's update questions; rules in lib/updates.mjs
+    labels.mjs             creates the standard labels in a repo; rules in lib/labels.mjs
+    tidy.mjs               deletes merged local branches and their clean worktrees; rules in lib/tidy.mjs
+    lib/locks.mjs          the builder's and reviewer's lock files
     lib/config.mjs         the registry, the config and its defaults
     check.mjs              the baseline's script rules
     trigger.ps1            lock, refresh, gate, run or defer
-    nightshift.ps1         register, unregister, enable, disable, status, trigger, watch
+    nightshift.ps1         register, unregister, enable, disable, status, trigger, watch, tidy
     run.ps1                the launcher, copied to the nightshift home
     lib/common.ps1         the scripts' shared helpers
     hooks/pre-push         the hook template register fills in
@@ -230,6 +264,17 @@ nightshift/
 ```
 
 Installed once with `claude plugin marketplace add ChrispyCode21/nightshift`, then `claude plugin install nightshift@nightshift`. Skills are namespaced (`/nightshift:build-next-issue`); scripts are found through the plugin's install path, so nothing is copied into each repo except its config.
+
+## How updates reach a machine
+
+A merge to `main` changes nothing on a machine by itself. Two things have to happen, and neither is automatic:
+
+1. **The installed plugin.** Claude Code runs the cached copy in `~/.claude/plugins/cache/nightshift/<version>`, and `claude plugin update` installs only a new `version` from `plugin.json`. So a PR that changes `bin/`, `skills/`, `agents/` or `hooks/` must bump `version`; CI's "Plugin version bumped" step fails it otherwise. The owner then runs `claude plugin marketplace update nightshift` and `claude plugin update nightshift@nightshift`.
+2. **The watcher task.** Its action (the `conhost.exe --headless` command line) is stored in Task Scheduler when `nightshift watch` runs. On each `tick` the watcher compares the installed version (from `installed_plugins.json`, as `run.ps1` reads it) with the version it last registered for, kept in `update-state.json` in the nightshift home. When they differ it registers itself again exactly as `nightshift watch` does and records the version; when they match it leaves the task alone.
+
+The watcher only tells the owner about updates: nothing runs `claude plugin update` unasked, so the owner decides when new agent behavior starts (a buggy or test version never installs itself). Once a day, on a `tick`, it reads `version` from `plugin.json` on `main` through `gh`; when that is newer than the installed version it logs the line to `nightshift.log` and shows a Windows toast with the version and the two commands. The version compare and the once-a-day rule are `bin/lib/updates.mjs` (unit-tested), called through `bin/updates.mjs`. The check uses the nightshift token when one is set, which then needs read access to this repo's contents; if main can't be read it logs that and tries again tomorrow.
+
+Possible later: Claude Code can auto-update third-party marketplaces (`"autoUpdate": true` in `extraKnownMarketplaces`, off by default). It isn't used: reports differ on whether it reinstalls plugin code, and it would install whatever merges to `main` unseen. If it's turned on, the re-register step above already handles the new version.
 
 ## Moving Logtelligent over
 

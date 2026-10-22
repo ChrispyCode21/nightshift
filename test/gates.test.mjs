@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { defaults } from '../bin/lib/config.mjs'
 import {
   buildCandidates,
   isDue,
@@ -79,6 +80,17 @@ test('buildCandidates: labels, open PRs, left-over branches and blockers wait, w
     '#3 left-over branch agent/issue-3-old-try',
     '#4 blocked by #1',
   ])
+})
+
+test('buildCandidates: an issue labeled on-hold waits under the default skip labels', () => {
+  const { candidates, waiting } = gate([issue(1, { labels: [{ name: 'on-hold' }] }), issue(2)], {
+    skipLabels: defaults().builder.skipLabels,
+  })
+  assert.deepEqual(
+    candidates.map((c) => c.number),
+    [2],
+  )
+  assert.deepEqual(waiting, ['#1 on-hold'])
 })
 
 test('buildCandidates: a parent with open sub-issues is skipped silently', () => {

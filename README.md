@@ -12,7 +12,7 @@ claude plugin install nightshift@nightshift
 ## Opt a repo in
 
 1. Commit a `.claude/nightshift.json` to the repo (`{}` works; see DESIGN.md, "The config file").
-2. Register its checkout on this machine. That creates the builder's clone (`<checkout>-builder`) and the reviewer's worktree (`<checkout>-reviewer`) and installs the pre-push hook:
+2. Register its checkout on this machine. That creates the builder's clone (`<checkout>-builder`) and the reviewer's worktree (`<checkout>-reviewer`) installs the pre-push hook and creates the standard labels (see Labels below):
 
 ```powershell
 $ns = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw | ConvertFrom-Json).plugins.'nightshift@nightshift'[0].installPath
@@ -22,6 +22,18 @@ $ns = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Ra
 Optionally, give the agents a fine-grained GitHub token scoped to the registered repos, instead of your full gh login (DESIGN.md, "GitHub access" lists the permissions): `nightshift.ps1 token`.
 
 After the first registration, `%USERPROFILE%\.nightshift\run.ps1 nightshift.ps1 <command>` runs the installed version from anywhere.
+
+## Labels
+
+GitHub labels belong to one repository; there are no account-wide labels. `register` creates nightshift's standard labels in the repo it registers: `on-hold`, `agent-needs-info`, `agent-followup`, `standards`, `touches-data`, `touches-gates`, `reviewed`, `nightshift` and `question`. It only creates the ones that are missing, never changes one that exists, and only warns if it can't (a token that doesn't include the repo yet: add it, then run `register` again with the same options; that also re-enables a disabled repo). The list is `bin/lib/labels.mjs`.
+
+Putting `on-hold` on an issue pauses that issue for the builder: it skips it and reports it as waiting. It doesn't pause the repo (`disable` does) or the reviewer. Remove the label to resume.
+
+The builder skips issues labeled `agent-needs-info`, `agent-followup`, `question` or `on-hold` (`builder.skipLabels` in `defaults/nightshift.json`). A repo whose own `.claude/nightshift.json` sets `builder.skipLabels` replaces that list (arrays replace, objects merge; `bin/lib/config.mjs`), so it must include `on-hold` itself:
+
+```json
+{ "builder": { "skipLabels": ["agent-needs-info", "agent-followup", "question", "on-hold", "my-label"] } }
+```
 
 ## Run it
 
@@ -33,12 +45,13 @@ After the first registration, `%USERPROFILE%\.nightshift\run.ps1 nightshift.ps1 
 
 | Command | Does |
 |---|---|
-| `register <checkout>` | opts a checkout in on this machine (the repo must have its config file) |
+| `register <checkout>` | opts a checkout in on this machine (the repo must have its config file) and creates the standard labels in the repo |
 | `unregister <name>` | removes the hook and the entry; leaves the checkouts |
 | `enable` / `disable <name>` | pauses a repo without touching its code |
 | `status` | the registered repos, the watcher, and the last 15 log lines (each run ends with what it did) |
 | `trigger <name> build\|review` | runs one agent for one repo now, if Tier 0 finds work |
 | `watch` / `watch -Off` | installs or removes the 30-minute watcher |
 | `token` / `token -Off` | sets or removes the fine-grained GitHub token the agents use |
+| `tidy [<checkout>] [-DryRun]` | deletes local branches whose work is on `main` and their clean worktrees; the watcher runs it nightly after 9 PM (DESIGN.md, "Tidying checkouts") |
 
 State (registry, locks, logs, and `runs.jsonl`, one record per run) lives in `%USERPROFILE%\.nightshift\`.
