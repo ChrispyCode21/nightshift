@@ -163,12 +163,12 @@ try {
     Remove-Item "$runLog.err"
   }
   $result = $outcome | ConvertFrom-Json
-  $took = if ($null -ne $result.durationSeconds) { " in $($result.durationSeconds)s" } else { '' }
+  ${took} = if ($null -ne $result.durationSeconds) { " in $($result.durationSeconds)s" } else { '' }
   if ($outcomeExit -ne 0) {
-    Log "failed: $($result.reason)$took"
+    Log "failed: $($result.reason)${took}"
     exit 1
   }
-  Log "finished ($exitCode)$took: $(if ($result.summary) { $result.summary } else { '(no output)' })"
+  Log "finished ($exitCode)${took}: $(if ($result.summary) { $result.summary } else { '(no output)' })"
 } catch {
   Log "failed: $_"
   exit 1
