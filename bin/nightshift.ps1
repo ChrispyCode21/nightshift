@@ -10,10 +10,11 @@
 #   nightshift.ps1 watch [-Off]               the 30-minute watcher (a Windows scheduled task)
 #   nightshift.ps1 tick                       one watcher pass: Tier 0 for every enabled repo
 #   nightshift.ps1 token [-Off]               the fine-grained GitHub token the agents use
+#   nightshift.ps1 discord [-Off]             the Discord webhook that hears when a repo is stuck
 #   nightshift.ps1 tidy [<checkout>] [-DryRun]  deletes merged local branches and their clean worktrees
 param(
   [Parameter(Mandatory, Position = 0)]
-  [ValidateSet('register', 'unregister', 'enable', 'disable', 'status', 'trigger', 'watch', 'tick', 'token', 'tidy', 'logs')]
+  [ValidateSet('register', 'unregister', 'enable', 'disable', 'status', 'trigger', 'watch', 'tick', 'token', 'discord', 'tidy', 'logs')]
   [string]$Command,
   [Parameter(Position = 1)][string]$Target,
   [Parameter(Position = 2)][string]$Agent,
@@ -192,6 +193,7 @@ switch ($Command) {
     if (-not $ready.repos) { Write-Output 'No repos registered.' }
     $task = Get-ScheduledTask -TaskName $WatchTask -ErrorAction SilentlyContinue
     Write-Output "`nWatcher: $(if ($task) { $task.State } else { 'not installed' })"
+    Write-Output "Discord: $(if (Test-Path $NsDiscord) { 'a webhook is set' } else { 'no webhook (nightshift.ps1 discord)' })"
     Write-Output "GitHub:  $(if (Test-Path $NsToken) { 'the nightshift token' } else { 'your own gh login (nightshift.ps1 token narrows it)' })"
     $log = Join-Path $NsHome 'logs\nightshift.log'
     if (Test-Path $log) { Write-Output "`nRecent:"; Get-Content $log -Tail 15 }
@@ -250,6 +252,30 @@ switch ($Command) {
     $tidyArgs = @(if ($Target) { (Resolve-Path $Target).Path } else { '--all' })
     if ($DryRun) { $tidyArgs += '--dry-run' }
     node (Join-Path $NsRoot 'bin\tidy.mjs') @tidyArgs
+  }
+  'discord' {
+    if ($Off) {
+      Remove-Item -LiteralPath $NsDiscord -ErrorAction SilentlyContinue
+      Write-Output 'Webhook removed. Nothing is sent to Discord.'
+      break
+    }
+    Write-Output 'Paste a Discord webhook URL (channel settings, Integrations, Webhooks).'
+    Write-Output 'It is stored encrypted, readable only by this Windows user on this machine.'
+    $secure = Read-Host -AsSecureString 'Webhook URL'
+    if ($secure.Length -eq 0) { Fail 'No URL given; nothing changed.' }
+    $url = [Net.NetworkCredential]::new('', $secure).Password.Trim()
+    if ($url -notmatch '^https://(?:(?:ptb|canary)\.)?discord(?:app)?\.com/api/webhooks/\d+/[\w-]+$') {
+      Fail "That isn't a Discord webhook URL; nothing changed."
+    }
+    $test = @{ username = 'nightshift'; content = 'nightshift: this channel will hear when a repo is stuck.'; allowed_mentions = @{ parse = @() } }
+    try {
+      Invoke-RestMethod -Uri $url -Method Post -ContentType 'application/json' -Body ($test | ConvertTo-Json -Depth 3) -TimeoutSec 15 | Out-Null
+    } catch {
+      Fail "Discord didn't accept a test message ($($_.Exception.Message)); nothing changed."
+    }
+    Set-Content -LiteralPath $NsDiscord -Value (ConvertTo-SecureString $url -AsPlainText -Force | ConvertFrom-SecureString) -Encoding ascii
+    Write-NsLog 'Discord webhook set'
+    Write-Output 'Saved. A test message went to the channel.'
   }
   'token' {
     if ($Off) {
