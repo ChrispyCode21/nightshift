@@ -6,6 +6,8 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 import {
+  BACKOFF_MINUTES,
+  backoffUntil,
   decodeLog,
   formatLock,
   formatRun,
@@ -16,6 +18,7 @@ import {
   processAlive,
   runFailure,
   runRecord,
+  setback,
   summarizeRun,
 } from '../bin/lib/runs.mjs'
 
@@ -282,4 +285,107 @@ test('summarizeRun: the last "Result:" line is the summary, markdown and all; wi
   assert.equal(summarize('no result here\nPR 3: merged').summary, 'no result here PR 3: merged')
   assert.equal(summarize('Result:\nPR 3: merged').summary, 'Result: PR 3: merged')
   assert.deepEqual(summarize(log).refs, ['#5', 'PR 12', 'issue 5'])
+})
+
+const MIN = 60_000
+const at = (minutes) => new Date(Date.parse('2026-10-28T12:00:00Z') + minutes * MIN).toISOString()
+const rec = (minutes, extra = {}) => ({
+  repo: 'foo',
+  agent: 'build',
+  outcome: 'finished',
+  summary: 'built PR 12 for issue 5',
+  start: at(minutes - 10),
+  end: at(minutes),
+  ...extra,
+})
+const failed = (minutes) => rec(minutes, { outcome: 'failed' })
+const wait = (records, extra = {}) => backoffUntil(records, { repo: 'foo', agent: 'build', ...extra })
+
+test('setback: failures and "nothing built" count; questions, holds and merges do not', () => {
+  assert.equal(setback(rec(0, { outcome: 'failed' })), true)
+  assert.equal(setback(rec(0, { outcome: 'timed-out' })), true)
+  assert.equal(setback(rec(0, { summary: 'nothing built: all candidates stopped' })), true)
+  assert.equal(setback(rec(0, { agent: 'review', summary: 'No PRs due' })), true)
+  assert.equal(setback(rec(0, { summary: 'need answers on issue 5' })), false)
+  assert.equal(
+    setback(rec(0, { agent: 'review', summary: 'merged PR 3; held PR 4 (checks failing)' })),
+    false,
+  )
+  assert.equal(setback({ outcome: 'finished' }), false) // an older record with no summary
+})
+
+test('backoffUntil: no runs, or runs that did something, never wait', () => {
+  assert.equal(wait([]), null)
+  assert.equal(wait([rec(0), rec(60)]), null)
+})
+
+test("backoffUntil: 30 minutes, then 1 hour, then 2 hours for every setback after, from the last one's end", () => {
+  assert.deepEqual(BACKOFF_MINUTES, [30, 60, 120])
+  assert.deepEqual(wait([failed(0)]), { count: 1, until: Date.parse(at(30)) })
+  assert.deepEqual(wait([failed(0), failed(40)]), { count: 2, until: Date.parse(at(100)) })
+  assert.deepEqual(wait([failed(0), failed(40), failed(120)]), { count: 3, until: Date.parse(at(240)) })
+  const many = [0, 10, 20, 30, 40, 50].map(failed)
+  assert.deepEqual(wait(many), { count: 6, until: Date.parse(at(170)) }) // capped at 2 hours
+})
+
+test('backoffUntil: a run that did something starts the count over', () => {
+  assert.equal(wait([failed(0), failed(40), rec(100)]), null)
+  assert.deepEqual(wait([failed(0), failed(40), rec(100), failed(200)]), {
+    count: 1,
+    until: Date.parse(at(230)),
+  })
+})
+
+test('backoffUntil: a timeout is an ordinary setback, not a longer wait', () => {
+  assert.deepEqual(wait([rec(0, { outcome: 'timed-out' })]), { count: 1, until: Date.parse(at(30)) })
+})
+
+test('backoffUntil: other repos and agents are ignored', () => {
+  assert.equal(wait([failed(0), { ...failed(5), repo: 'bar' }, { ...rec(10), agent: 'review' }]).count, 1)
+  assert.equal(backoffUntil([failed(0)], { repo: 'foo', agent: 'review' }), null)
+  assert.equal(backoffUntil([failed(0)], { repo: 'bar', agent: 'build' }), null)
+})
+
+test('backoffUntil: a run that started with no record after it counts as one more setback, from its start', () => {
+  assert.deepEqual(wait([], { startedAt: at(0) }), { count: 1, until: Date.parse(at(30)) })
+  assert.deepEqual(wait([rec(0)], { startedAt: at(100) }), { count: 1, until: Date.parse(at(130)) })
+  assert.deepEqual(wait([failed(0)], { startedAt: at(100) }), { count: 2, until: Date.parse(at(160)) })
+  // the run that started is the one on record: nothing extra
+  assert.equal(wait([rec(100)], { startedAt: at(90) }), null)
+  assert.equal(wait([rec(100)], { startedAt: 'not a date' }), null)
+})
+
+test('preflight backoff: exit 10 with the wait while setbacks back the agent off, 0 otherwise', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nightshift-'))
+  try {
+    const now = Date.now()
+    const record = (outcome, ago) => ({
+      repo: 'foo',
+      agent: 'build',
+      outcome,
+      summary: '',
+      start: new Date(now - (ago + 5) * MIN).toISOString(),
+      end: new Date(now - ago * MIN).toISOString(),
+    })
+    const backoff = (...extra) =>
+      spawnSync(process.execPath, [PREFLIGHT, 'backoff', 'build', '--repo', 'foo', ...extra], {
+        env: { ...process.env, NIGHTSHIFT_HOME: dir },
+        encoding: 'utf8',
+      })
+    assert.equal(backoff().status, 0) // no runs.jsonl at all
+    writeFileSync(join(dir, 'runs.jsonl'), `${JSON.stringify(record('failed', 10))}\n`)
+    const waiting = backoff()
+    assert.equal(waiting.status, 10)
+    assert.match(
+      JSON.parse(waiting.stdout).reason,
+      /^1 run in a row came to nothing; trying again in 2\d minutes$/,
+    )
+    writeFileSync(join(dir, 'runs.jsonl'), `${JSON.stringify(record('failed', 45))}\n`)
+    assert.equal(backoff().status, 0) // 30 minutes have passed
+    writeFileSync(join(dir, 'runs.jsonl'), `${JSON.stringify(record('finished', 1))}\n`)
+    assert.equal(backoff().status, 0) // a run that did something
+    assert.equal(backoff('--started', new Date(now - 30_000).toISOString()).status, 10) // died with no record
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

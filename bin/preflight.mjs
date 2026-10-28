@@ -8,6 +8,8 @@
 //   node preflight.mjs build|review --repo <name> [--claim | --ignore-lock]
 //   node preflight.mjs release build|review --repo <name>     drop that run's lock
 //   node preflight.mjs lock build|review --repo <name>        exit 10 while a run holds the lock
+//   node preflight.mjs backoff build|review --repo <name> [--started <iso>]
+//                                                             exit 10 while runs that came to nothing back it off
 //   node preflight.mjs log --file <path>                      print a run log, UTF-8 or UTF-16
 //   node preflight.mjs log --newest [--repo <name>]           the newest run log's path
 //   node preflight.mjs log --list                             the last 20 runs in runs.jsonl
@@ -46,6 +48,7 @@ import {
 import { githubEnv } from './lib/github.mjs'
 import { lockHolder, lockPath } from './lib/locks.mjs'
 import {
+  backoffUntil,
   decodeLog,
   formatLock,
   formatRun,
@@ -284,6 +287,7 @@ try {
       failure,
       durationSeconds,
       refs,
+      summary,
       log: basename(logFile),
     })
     mkdirSync(home(), { recursive: true })
@@ -294,6 +298,19 @@ try {
     )
     const detail = { summary, durationSeconds }
     result = failure ? idle(record.reason, detail) : { status: 'work', reason: 'Finished.', ...detail }
+  } else if (mode === 'backoff') {
+    if (!['build', 'review'].includes(agent) || !option('--repo'))
+      throw new Error('Usage: backoff build|review --repo <name> [--started <iso>]')
+    const runsFile = join(home(), 'runs.jsonl')
+    const records = existsSync(runsFile) ? parseRuns(readFileSync(runsFile, 'utf8')) : []
+    const wait = backoffUntil(records, { repo: option('--repo'), agent, startedAt: option('--started') })
+    const minutes = wait ? Math.ceil((wait.until - Date.now()) / 60_000) : 0
+    result =
+      minutes > 0
+        ? idle(
+            `${wait.count} run${wait.count === 1 ? '' : 's'} in a row came to nothing; trying again in ${minutes} minutes`,
+          )
+        : { status: 'work', reason: 'No backoff.' }
   } else if (mode === 'lock') {
     if (!['build', 'review'].includes(agent) || !option('--repo'))
       throw new Error('Usage: lock build|review --repo <name>')
@@ -315,7 +332,7 @@ try {
     }
   } else
     throw new Error(
-      'Usage: preflight.mjs repos | peak | usage | build|review --repo <name> | release|lock build|review --repo <name>',
+      'Usage: preflight.mjs repos | peak | usage | build|review --repo <name> | release|lock|backoff build|review --repo <name>',
     )
 } catch (error) {
   result = { status: 'error', reason: String(error.stderr || error.message).trim() }

@@ -39,7 +39,7 @@ The builder skips issues labeled `agent-needs-info`, `agent-followup`, `question
 
 - **Nightly:** two desktop scheduled tasks, `/nightshift:build-next-issue` at 2:00 AM and `/nightshift:review-prs` at 4:00 AM (local time; outside Anthropic's peak hours).
 - **When something happens:** `nightshift.ps1 watch` installs a Windows task that checks every registered repo every 30 minutes, at no token cost until there's work. During peak hours it defers the work to 11:05 AM Pacific.
-- **By hand:** `nightshift.ps1 trigger <repo> build|review` (`-Now` skips the peak-hours and cool-down checks).
+- **By hand:** `nightshift.ps1 trigger <repo> build|review` (`-Now` skips the peak-hours, back-off and usage checks).
 
 ## Commands
 

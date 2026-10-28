@@ -5,7 +5,7 @@
 #   trigger.ps1 -Agent build|review (-Repo <name> | -Github <owner/repo>) [-Branch <b> -Sha <sha>] [-Now]
 #
 # -Branch/-Sha come from the pre-push hook: wait for that push to land, then make the branch's PR
-# due for review. -Now ignores peak hours, the cool-down and the usage check.
+# due for review. -Now ignores peak hours, the back-off and the usage check.
 param(
   [Parameter(Mandatory)][ValidateSet('build', 'review')][string]$Agent,
   [string]$Repo,
@@ -16,9 +16,6 @@ param(
 )
 . (Join-Path $PSScriptRoot 'lib\common.ps1')
 
-# After a headless run, the watcher leaves that repo's agent alone this long, so a run that fails
-# or can't finish its work costs one run, not one every 30 minutes.
-$CooldownHours = 3
 # Claude Code ends a headless run's background subagents this long after the coordinator's last
 # turn ("Background tasks still running…"); its default is 10 minutes, too short for a Tier 3 build.
 $BgWaitMinutes = 70
@@ -68,13 +65,25 @@ try {
     Log 'a run is in progress; it will pick this up'
     exit 0
   }
+  # After runs that came to nothing, the watcher leaves that repo's agent alone for 30 minutes, then
+  # 1 and 2 hours (BACKOFF_MINUTES in lib/runs.mjs), so a stuck run costs one run per wait, not one
+  # every 30 minutes. Runs that did something never wait. The marker holds when the last run began,
+  # to count a run that died with no record.
   $lastRun = Join-Path $NsHome "last-run\$name-$Agent"
-  if (-not $Now -and -not $Branch -and (Test-Path $lastRun)) {
-    $since = (Get-Date) - (Get-Item $lastRun).LastWriteTime
-    if ($since.TotalHours -lt $CooldownHours) { Log "ran $([int]$since.TotalMinutes) minutes ago; cooling down"; exit 0 }
+  if (-not $Now -and -not $Branch) {
+    $started = if (Test-Path $lastRun) { (Get-Content -Raw $lastRun).Trim() } else { '' }
+    $backoffArgs = @('backoff', $Agent, '--repo', $name)
+    if ($started) { $backoffArgs += @('--started', $started) }
+    $backoff = node (Join-Path $NsRoot 'bin\preflight.mjs') @backoffArgs | Out-String
+    if ($LASTEXITCODE -eq 10) { Log "backing off: $(($backoff | ConvertFrom-Json).reason)"; exit 0 }
   }
 
   # 3. Tier 0, with no model: refresh the checkout and ask the gate.
+  # Without a builder or reviewer checkout, $work is the owner's own; leave a branch they're on alone.
+  if ($work -eq $entry.checkout) {
+    git -C $work symbolic-ref -q HEAD 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { Log "$work is the owner's checkout, on a branch; not detaching it"; exit 0 }
+  }
   git -C $work fetch origin --prune 2>&1 | Out-Null
   git -C $work checkout --detach origin/HEAD 2>&1 | Out-Null
   if ($LASTEXITCODE -ne 0) { Log "couldn't refresh $work (local changes?)"; exit 1 }
@@ -128,7 +137,8 @@ try {
   $promptFile = Join-Path $NsHome "logs\$name-$Agent-$stamp.prompt"
   Set-Content -Encoding utf8 $promptFile $prompt
   Log "running $Skill; log $(Split-Path -Leaf $runLog)"
-  New-Item -ItemType File -Force $lastRun | Out-Null
+  $startedAt = (Get-Date).ToUniversalTime().ToString('o')
+  Set-Content -Encoding ascii $lastRun $startedAt
   if ($env:NIGHTSHIFT_ECHO) { Write-Host "Running; this can take up to $RunHours hours. 'nightshift logs' shows the log once it finishes." }
 
   # The run takes the lock through preflight.mjs under this pid, so a run that dies without
@@ -137,7 +147,6 @@ try {
   $env:CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = "$($BgWaitMinutes * 60 * 1000)"
   $timedOut = $false
   $exitCode = 1
-  $startedAt = (Get-Date).ToUniversalTime().ToString('o')
   try {
     $command = "& claude -p (Get-Content -Raw -Encoding utf8 '$promptFile') --model sonnet --permission-mode acceptEdits --settings '$settings'; exit `$LASTEXITCODE"
     $proc = Start-Process powershell.exe -ArgumentList '-NoProfile', '-Command', $command -WorkingDirectory $work `
