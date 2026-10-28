@@ -65,10 +65,57 @@ export function summarizeRun(stdout, { start, end = new Date() } = {}) {
 }
 
 // One runs.jsonl record. `failure` is runFailure's reason, whose 'timed out' is its own outcome.
-export function runRecord({ start, end, repo, agent, exitCode, failure, durationSeconds, refs, log }) {
+export function runRecord({
+  start,
+  end,
+  repo,
+  agent,
+  exitCode,
+  failure,
+  durationSeconds,
+  refs,
+  summary,
+  log,
+}) {
   const outcome = failure === 'timed out' ? 'timed-out' : failure ? 'failed' : 'finished'
   const reason = failure ? toAscii(failure, SUMMARY_CHARS) : null
-  return { start, end, repo, agent, exitCode, outcome, reason, durationSeconds, refs, log }
+  return { start, end, repo, agent, exitCode, outcome, reason, summary, durationSeconds, refs, log }
+}
+
+// How long the watcher leaves a repo's agent alone after runs that came to nothing, so a stuck run
+// costs one run per wait, not one every 30 minutes. The wait grows with each setback in a row and
+// stops at the last step; any run that did something starts it over.
+export const BACKOFF_MINUTES = [30, 60, 120]
+
+// The gate found work and the run still produced none: "Result: nothing built: <why>" or
+// "Result: no PRs due". Questions, holds and merges are progress: their label takes the item out
+// of the gate.
+const NOTHING_DONE = /^(nothing built|no PRs due)\b/i
+
+// A run that failed, timed out, was cut off, or found nothing to do after the gate said there was.
+export const setback = (record) => record.outcome !== 'finished' || NOTHING_DONE.test(record.summary ?? '')
+
+// When the agent may run again for `repo`, from its runs.jsonl records (oldest first): the number
+// of setbacks in a row and the time they end, or null. `startedAt` is when trigger.ps1 last began a
+// run for this repo and agent; one with no record after it died without reporting (the machine
+// restarted, the launcher was killed), which counts as one more setback, from that start.
+export function backoffUntil(records, { repo, agent, startedAt = null }) {
+  const mine = records.filter((r) => r.repo === repo && r.agent === agent)
+  let count = 0
+  for (const record of mine.toReversed()) {
+    if (!setback(record)) break
+    count++
+  }
+  let from = count ? mine.at(-1).end : null
+  const last = mine.at(-1)
+  const started = Date.parse(startedAt)
+  if (Number.isFinite(started) && !(Date.parse(last?.start) >= started)) {
+    count++
+    from = startedAt
+  }
+  const base = Date.parse(from)
+  if (!count || !Number.isFinite(base)) return null
+  return { count, until: base + BACKOFF_MINUTES[Math.min(count, BACKOFF_MINUTES.length) - 1] * 60_000 }
 }
 
 // The records in runs.jsonl's text; a line that doesn't parse is skipped.

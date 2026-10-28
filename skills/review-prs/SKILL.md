@@ -71,7 +71,7 @@ When `config.standards.baseline` is true and there are **Standards** findings: f
 
 ## 9. Clean up and report
 
-`git worktree remove --force .claude/worktrees/review-pr-<n>`, then `git branch -D <branch>`. Leave the `reviewed` label on. Release the repo's lock.
+`git worktree remove --force .claude/worktrees/review-pr-<n>`, then `git branch -D <branch>`. Then put the `reviewed` label back on: `node "$NS/bin/gh.mjs" pr edit <n> -R <owner/repo> --remove-label reviewed`, then `--add-label reviewed`. This run's own merge, fix and ci-fix commits came after the label first went on, and the new label date puts it after them, so the PR isn't due again because of them. Release the repo's lock.
 
 **What you write on GitHub is public and unreviewed until the owner reads it:** no environment variables, tokens or personal details; command output quoted only as far as needed; short comments.
 

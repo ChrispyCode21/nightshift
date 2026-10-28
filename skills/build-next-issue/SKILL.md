@@ -59,7 +59,7 @@ For verdicts `build` and `numbers`, start the `nightshift:plan-reviewer` subagen
 - **questions** or **numbers**: one comment on the issue with the questions (or tables), add the `agent-needs-info` label, and go back to step 3 with the next candidate. The owner answers in the thread and removes the label. All discussion stays on the issue: PRs are never drafts and never ask the owner to settle anything.
 - **split:** post it as a question, as above.
 - **create:** the owner's answer is the go-ahead; don't ask again. Create each issue from `plan.md` in the issue's milestone (or with the `nightshift` label when `config.builder.milestones` is `"none"`), make them sub-issues (`node "$NS/bin/gh.mjs" api -X POST 'repos/<owner/repo>/issues/<n>/sub_issues' -F sub_issue_id=<id>`, the new issue's `.id`, not its number), add the blockers (`node "$NS/bin/gh.mjs" api -X POST 'repos/<owner/repo>/issues/<later>/dependencies/blocked_by' -F issue_id=<earlier's id>`), rewrite the issue's body as what's left to it, comment the split in one line, and rerun Tier 0 with `--ignore-lock` in place of `--claim`.
-- **stop:** note it for the report, quoting the text, and go to the next candidate.
+- **stop:** note it for the report, quoting the text, add one comment on the issue saying why it was set aside, add the `on-hold` label so the next Tier 0 skips it, and go to the next candidate. The owner removes the label.
 - **build:** step 6. At most one build per repo per run.
 
 No candidate left: note what's waiting, release the lock, next repo.
