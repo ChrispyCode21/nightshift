@@ -47,6 +47,7 @@ import {
 } from './lib/gates.mjs'
 import { githubEnv } from './lib/github.mjs'
 import { lockHolder, lockPath } from './lib/locks.mjs'
+import { notifyOutcome } from './lib/notify.mjs'
 import {
   backoffUntil,
   decodeLog,
@@ -297,6 +298,11 @@ try {
 `,
     )
     const detail = { summary, durationSeconds }
+    const note = await notifyOutcome(parseRuns(readFileSync(join(home(), 'runs.jsonl'), 'utf8')), {
+      repo: record.repo,
+      agent: record.agent,
+    })
+    if (note) detail.notice = note
     result = failure ? idle(record.reason, detail) : { status: 'work', reason: 'Finished.', ...detail }
   } else if (mode === 'backoff') {
     if (!['build', 'review'].includes(agent) || !option('--repo'))

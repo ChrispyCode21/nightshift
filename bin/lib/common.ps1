@@ -12,6 +12,8 @@ $NsRegistry = Join-Path $NsHome 'repos.json'
 $NsLauncher = Join-Path $NsHome 'run.ps1'
 # The fine-grained GitHub token the agents use, when the owner has set one (DESIGN.md, "GitHub access").
 $NsToken = Join-Path $NsHome 'gh-token'
+# The Discord webhook the owner is told about stuck repos on, when set (DESIGN.md, "Back-off").
+$NsDiscord = Join-Path $NsHome 'discord-webhook'
 foreach ($dir in 'logs', 'locks', 'last-run') { New-Item -ItemType Directory -Force (Join-Path $NsHome $dir) | Out-Null }
 
 # Git reports "dubious ownership" on drives that don't record owners (exFAT); runs inherit these.

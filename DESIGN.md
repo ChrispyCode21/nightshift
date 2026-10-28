@@ -33,6 +33,8 @@ The same mechanics Logtelligent uses now (its PIPELINE.md, "Tiers" and "Triggers
 
 **Back-off.** After a run that came to nothing, the watcher leaves that repo's agent alone for 30 minutes, then 1 hour, then 2 hours for each one after, so a stuck run costs one run per wait, not one every 30 minutes. A run counts as nothing when it failed, timed out or was cut off, when it ends `Result: nothing built` or `Result: no PRs due` although Tier 0 found work, or when its launcher died with no record in `runs.jsonl`. Questions, holds and merges are progress: the label they leave takes the item out of Tier 0, so an idle repo is never backed off. Any run that does something starts the count over. `-Now` and the pre-push hook skip it. `preflight.mjs backoff` computes it from `runs.jsonl` (`backoffUntil` in `lib/runs.mjs`) and the `last-run` marker, which holds when the last run began.
 
+**Telling the owner.** The first run that takes a repo's agent to the 2-hour wait posts one message to a Discord webhook, and the first run that does something after that posts another (`notification` in `lib/notify.mjs`, called from `preflight.mjs outcome`). Later setbacks at the 2-hour step stay quiet; a launcher that died with no record isn't counted. The webhook URL is set with `nightshift.ps1 discord`, which checks it is a Discord webhook URL, sends a test message, and stores it encrypted with DPAPI like the GitHub token (`lib/secret.mjs`); with none set nothing is sent. Only Discord's own URLs are ever posted to. The message names the repo, the agent, the count and the log, with the run's reason cut to printable ASCII and every mention turned off, since it is text from a run that read issues and PRs. A refused, slow or unreadable webhook never changes what the run reports: `outcome` adds a `notice` line, which `trigger.ps1` writes to `nightshift.log`. Only runs `trigger.ps1` starts (the watcher, the hook, `trigger`) report this way; the 2 and 4 AM scheduled tasks don't.
+
 **Long runs.** `claude -p` ends its session when the coordinator ends its turn, and stops any subagent still in the background 10 minutes later ("Background tasks still running…"), which cuts a Tier 3 build off before it is pushed. `trigger.ps1` raises that wait to 70 minutes (`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`) and kills a run after 3 hours. It exports its own pid for the lock (`pid N (runner)`), so a lock whose launcher has died is stale at once instead of after 4 hours, and it releases the lock when the run ends however it ends. A run is logged `finished (0) in 41s: <summary>` only if it exited 0 and neither its log nor its stderr shows Claude Code cut it off (`runFailure` in `lib/runs.mjs`); otherwise `failed: <why> in 41s`, and it counts toward the back-off. The `outcome` step writes both that line and one record in `runs.jsonl` (start, end, repo, agent, exit code, outcome, duration, the PRs and issues named, log file name). The summary is the `Result:` line both skills end their reply with (`Result: built PR 12 for issue 5`, `Result: need answers on issue 5`, `Result: merged PR 3; held PR 4 (why)`), or without one the last few lines of stdout; it never comes from stderr, and is cut to printable ASCII: it is text from a run that read issues and PRs, so it is only printed, never executed or fed back to a model. `nightshift.ps1 logs` reads these files back (`preflight.mjs log`, which decodes UTF-8 and older UTF-16 logs) and prints them as data.
 
 ## Tidying checkouts
@@ -252,10 +254,12 @@ nightshift/
     labels.mjs             creates the standard labels in a repo; rules in lib/labels.mjs
     tidy.mjs               deletes merged local branches and their clean worktrees; rules in lib/tidy.mjs
     lib/locks.mjs          the builder's and reviewer's lock files
+    lib/notify.mjs         when a stuck repo is worth a Discord message, and the message
+    lib/secret.mjs         reads a DPAPI-encrypted secret (the GitHub token, the webhook URL)
     lib/config.mjs         the registry, the config and its defaults
     check.mjs              the baseline's script rules
     trigger.ps1            lock, refresh, gate, run or defer
-    nightshift.ps1         register, unregister, enable, disable, status, trigger, watch, tidy
+    nightshift.ps1         register, unregister, enable, disable, status, trigger, watch, token, discord, tidy
     run.ps1                the launcher, copied to the nightshift home
     lib/common.ps1         the scripts' shared helpers
     hooks/pre-push         the hook template register fills in

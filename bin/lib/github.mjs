@@ -1,9 +1,9 @@
 // How the agents reach GitHub (DESIGN.md, "GitHub access"): the gh commands they may run, and the
 // fine-grained token they run them with, when the owner has set one with `nightshift.ps1 token`.
-import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { home } from './config.mjs'
+import { readSecret } from './secret.mjs'
 
 // The gh commands the skills and Tier 0 use. Anything else (auth, secret, repo delete, workflow
 // run, …) is refused, so an agent misled by text in an issue can't reach it through gh.mjs.
@@ -59,20 +59,6 @@ let token
 export function githubEnv(base = process.env) {
   const path = tokenPath()
   if (!existsSync(path)) return base
-  token ??= readToken(path)
+  token ??= readSecret(path)
   return { ...base, GH_TOKEN: token }
-}
-
-// The token is stored with Windows DPAPI (ConvertFrom-SecureString), so only this Windows user on
-// this machine can read it back.
-function readToken(path) {
-  const script =
-    "$s = (Get-Content -Raw -LiteralPath $env:NIGHTSHIFT_TOKEN_FILE).Trim() | ConvertTo-SecureString; [Net.NetworkCredential]::new('', $s).Password"
-  const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-    env: { ...process.env, NIGHTSHIFT_TOKEN_FILE: path },
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }).trim()
-  if (!out) throw new Error(`${path} is empty`)
-  return out
 }
