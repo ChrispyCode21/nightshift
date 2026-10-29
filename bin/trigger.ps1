@@ -71,7 +71,8 @@ try {
   # to count a run that died with no record.
   $lastRun = Join-Path $NsHome "last-run\$name-$Agent"
   if (-not $Now -and -not $Branch) {
-    $started = if (Test-Path $lastRun) { (Get-Content -Raw $lastRun).Trim() } else { '' }
+    # Markers from before the back-off are empty files, which Get-Content -Raw reads as $null.
+    $started = if (Test-Path $lastRun) { "$(Get-Content -Raw $lastRun)".Trim() } else { '' }
     $backoffArgs = @('backoff', $Agent, '--repo', $name)
     if ($started) { $backoffArgs += @('--started', $started) }
     $backoff = node (Join-Path $NsRoot 'bin\preflight.mjs') @backoffArgs | Out-String
