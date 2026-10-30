@@ -83,7 +83,7 @@ export function runRecord({
 }
 
 // How long the watcher leaves a repo's agent alone after runs that came to nothing, so a stuck run
-// costs one run per wait, not one every 30 minutes. The wait grows with each setback in a row and
+// costs one run per wait, not one every pass. The wait grows with each setback in a row and
 // stops at the last step; any run that did something starts it over.
 export const BACKOFF_MINUTES = [30, 60, 120]
 

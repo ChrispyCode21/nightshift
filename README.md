@@ -40,7 +40,7 @@ The builder skips issues labeled `agent-needs-info`, `agent-followup`, `question
 ## Run it
 
 - **Nightly:** two desktop scheduled tasks, `/nightshift:build-next-issue` at 2:00 AM and `/nightshift:review-prs` at 4:00 AM (local time; outside Anthropic's peak hours).
-- **When something happens:** `nightshift.ps1 watch` installs a Windows task that checks every registered repo every 30 minutes, at no token cost until there's work. During peak hours it defers the work to 11:05 AM Pacific.
+- **When something happens:** `nightshift.ps1 watch` installs a Windows task that checks every registered repo every 90 minutes, waking the PC if it's asleep, at no token cost until there's work. During peak hours it defers the work to 11:05 AM Pacific.
 - **By hand:** `nightshift.ps1 trigger <repo> build|review` (`-Now` skips the peak-hours, back-off and usage checks).
 
 ## Commands
@@ -53,7 +53,7 @@ The builder skips issues labeled `agent-needs-info`, `agent-followup`, `question
 | `status` | the registered repos, the watcher, and the last 15 log lines (each run ends with what it did) |
 | `trigger <name> build\|review` | runs one agent for one repo now, if Tier 0 finds work, and prints what it does as it goes |
 | `logs [<name>]` / `logs -List` | prints the newest run log (for one repo), or lists the last 20 runs from `runs.jsonl` |
-| `watch` / `watch -Off` | installs or removes the 30-minute watcher |
+| `watch` / `watch -Off` | installs or removes the 90-minute watcher |
 | `token` / `token -Off` | sets or removes the fine-grained GitHub token the agents use |
 | `discord` / `discord -Off` | sets or removes the Discord webhook that hears about PRs opened, questions left and stuck repos (DESIGN.md, "Back-off") |
 | `tidy [<checkout>] [-DryRun]` | deletes local branches whose work is on `main` and their clean worktrees; the watcher runs it nightly after 9 PM (DESIGN.md, "Tidying checkouts") |

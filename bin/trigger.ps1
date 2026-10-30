@@ -67,7 +67,7 @@ try {
   }
   # After runs that came to nothing, the watcher leaves that repo's agent alone for 30 minutes, then
   # 1 and 2 hours (BACKOFF_MINUTES in lib/runs.mjs), so a stuck run costs one run per wait, not one
-  # every 30 minutes. Runs that did something never wait. The marker holds when the last run began,
+  # every pass. Runs that did something never wait. The marker holds when the last run began,
   # to count a run that died with no record.
   $lastRun = Join-Path $NsHome "last-run\$name-$Agent"
   if (-not $Now -and -not $Branch) {
@@ -103,7 +103,8 @@ try {
     $at = [TimeZoneInfo]::ConvertTime($nowPt.Date.AddHours(11).AddMinutes(5), $pacific, [TimeZoneInfo]::Local)
     $action = New-NsHiddenAction "trigger.ps1 -Agent $Agent -Repo $name"
     Register-ScheduledTask -TaskName "nightshift deferred $name $Agent" -Action $action `
-      -Trigger (New-ScheduledTaskTrigger -Once -At $at) -Force | Out-Null
+      -Trigger (New-ScheduledTaskTrigger -Once -At $at) `
+      -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable -WakeToRun) -Force | Out-Null
     Log "work found during peak hours; deferred to $($at.ToString('t'))"
     exit 0
   }
