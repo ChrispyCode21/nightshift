@@ -7,7 +7,7 @@
 #   nightshift.ps1 status                     the registered repos, the watcher and recent log lines
 #   nightshift.ps1 trigger <name> build|review [-Now]   prints what it does as it goes
 #   nightshift.ps1 logs [<name>] [-List]      the newest run log (for one repo), or the last 20 runs
-#   nightshift.ps1 watch [-Off]               the 30-minute watcher (a Windows scheduled task)
+#   nightshift.ps1 watch [-Off]               the 90-minute watcher (a Windows scheduled task)
 #   nightshift.ps1 tick                       one watcher pass: Tier 0 for every enabled repo
 #   nightshift.ps1 token [-Off]               the fine-grained GitHub token the agents use
 #   nightshift.ps1 discord [-Off]             the Discord webhook that hears when a repo is stuck
@@ -43,13 +43,14 @@ function Get-HookPath($checkout) {
   Join-Path $common 'hooks\pre-push'
 }
 function Slash($path) { $path -replace '\\', '/' }
-# The watcher: a Windows scheduled task running `tick` every 30 minutes through the launcher.
+# The watcher: a Windows scheduled task running `tick` every 90 minutes through the launcher.
 function Register-NsWatcher {
   Install-NsLauncher
   $action = New-NsHiddenAction 'nightshift.ps1 tick'
-  $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddMinutes(15) -RepetitionInterval (New-TimeSpan -Minutes 30)
-  # A pass still running when the next is due makes the next one skip.
-  $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable
+  $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddMinutes(15) -RepetitionInterval (New-TimeSpan -Minutes 90)
+  # A pass still running when the next is due makes the next one skip. WakeToRun wakes a
+  # sleeping PC for each pass (the power plan must allow wake timers).
+  $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -WakeToRun
   Register-ScheduledTask -TaskName $WatchTask -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
   Save-NsUpdateState @{ registeredVersion = Get-NsInstalledVersion }
 }
@@ -231,7 +232,7 @@ switch ($Command) {
       break
     }
     Register-NsWatcher
-    Write-Output "Watcher installed: '$WatchTask' in Task Scheduler, every 30 minutes."
+    Write-Output "Watcher installed: '$WatchTask' in Task Scheduler, every 90 minutes."
   }
   'tick' {
     # The owner updated the plugin: the task still has the old action, so register it again.
