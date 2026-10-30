@@ -254,7 +254,7 @@ nightshift/
     labels.mjs             creates the standard labels in a repo; rules in lib/labels.mjs
     tidy.mjs               deletes merged local branches and their clean worktrees; rules in lib/tidy.mjs
     lib/locks.mjs          the builder's and reviewer's lock files
-    lib/notify.mjs         when a stuck repo is worth a Discord message, and the message
+    lib/notify.mjs         when a run is worth a Discord message (PR opened, question left, stuck, recovered), and the message
     lib/secret.mjs         reads a DPAPI-encrypted secret (the GitHub token, the webhook URL)
     lib/config.mjs         the registry, the config and its defaults
     check.mjs              the baseline's script rules

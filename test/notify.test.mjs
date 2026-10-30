@@ -57,8 +57,22 @@ test('notification: a run that did something after a streak that got to the top 
   const recovered = notification([...stuck, rec()], WHO)
   assert.deepEqual([recovered.kind, recovered.count], ['recovered', 3])
   assert.equal(notification([...stuck, failed(), rec()], WHO).count, 4)
-  assert.equal(notification([...stuck, rec(), rec()], WHO), null) // the next success is not news
-  assert.equal(notification([failed(), failed(), rec()], WHO), null) // never got to the top
+  const merged = rec({ summary: 'merged PR 3' })
+  assert.equal(notification([...stuck, merged, merged], WHO), null) // the next success is not news
+  assert.equal(notification([failed(), failed(), merged], WHO), null) // never got to the top
+})
+
+test('notification: a run that opened a PR or left a question says so; other runs say nothing', () => {
+  const built = notification([rec()], WHO)
+  assert.equal(built.kind, 'built')
+  assert.equal(notification([rec({ summary: 'built PR #12 for issue 5' })], WHO).kind, 'built')
+  assert.equal(notification([rec({ summary: 'need answers on issue 5' })], WHO).kind, 'asked')
+  for (const summary of ['nothing built: all candidates stopped', 'no PRs due', 'merged PR 3; held PR 4'])
+    assert.equal(notification([rec({ summary })], WHO), null, summary)
+  assert.equal(notification([failed()], WHO), null) // a failure is a setback, not news yet
+  // a run that gets past a stuck streak is "recovered", not "built"
+  assert.equal(notification([failed(), failed(), failed(), rec()], WHO).kind, 'recovered')
+  assert.equal(notification([{ ...rec(), repo: 'bar' }], WHO), null)
 })
 
 test('notification: another repo or agent never counts', () => {
@@ -84,6 +98,14 @@ test('discordMessage: says who, how long, why and where; no mentions; ASCII and 
   assert.ok(text.length < 600)
   const back = discordMessage({ kind: 'recovered', count: 4, last: rec() }, WHO)
   assert.match(back.content, /foo build is working again after 4 runs that came to nothing/)
+  const built = discordMessage({ kind: 'built', last: rec() }, WHO)
+  assert.equal(built.content, 'nightshift: foo build opened a PR.\nResult: built PR 12 for issue 5')
+  const asked = discordMessage({ kind: 'asked', last: rec({ summary: 'need answers on issue 5' }) }, WHO)
+  assert.equal(
+    asked.content,
+    'nightshift: foo build left a question and needs your answer.\nResult: need answers on issue 5',
+  )
+  assert.deepEqual(built.allowed_mentions, { parse: [] })
 })
 
 test('isDiscordWebhook: only Discord webhook URLs', () => {
@@ -140,6 +162,9 @@ test('notifyOutcome: sends when stuck and a webhook is set; says nothing otherwi
     assert.equal(sent[0][0], URL_OK)
     assert.equal(await notifyOutcome([failed()], WHO, deps()), null) // nothing to say yet
     assert.equal(sent.length, 1)
+    assert.equal(await notifyOutcome([rec()], WHO, deps()), 'discord: sent (built)')
+    assert.equal(sent.length, 2)
+    sent.pop()
 
     assert.match(
       await notifyOutcome(
