@@ -1,7 +1,8 @@
-// Telling the owner what needs them (DESIGN.md, "Back-off"): one Discord message when a run opens a
-// PR, one when it leaves a question on an issue, one when the back-off first reaches its longest
-// wait, and one when a run gets past it. The decision and the message are pure functions,
-// unit-tested (test/notify.test.mjs); the I/O is injected.
+// Telling the owner what a run did (DESIGN.md, "Telling the owner"): one Discord message when a run
+// opens a PR, one when it leaves a question on an issue, one when a review run merges or holds a
+// PR, one when the back-off first reaches its longest wait, and one when a run gets past it. The
+// decision and the message are pure functions, unit-tested (test/notify.test.mjs); the I/O is
+// injected. lib/alerts.mjs decides the messages that don't come from a run.
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { home } from './config.mjs'
@@ -18,13 +19,18 @@ export const isDiscordWebhook = (url) => DISCORD_WEBHOOK.test(url)
 const REASON_CHARS = 200
 const BUILT = /\bbuilt PR #?\d+/i
 const ASKED = /\bneed answers on issue\b/i
+// The review skill's Result: line (review-prs SKILL.md): "merged PR 3; held PR 4 (why); ready for
+// owner PR 5 (why)". Held and ready-for-owner PRs wait on the owner.
+const REVIEWED = /\b(?:merged|held|ready for owner) PR #?\d+/i
+const NEEDS_OWNER = /\b(?:held|ready for owner) PR #?\d+/i
 
 // What the owner should hear about after `records` (runs.jsonl, oldest first, the run that just
 // ended last), or null. 'stuck': this run is the one that took its repo and agent to the longest
 // wait, once per streak. 'recovered': a run that did something after a streak that got that far.
 // A streak counts the setbacks on record; a launcher that died with no record is not one of them.
 // Otherwise a run that finished with "built PR <n>" or "need answers on issue <m>" (the build
-// skill's Result: line) is 'built' or 'asked'; any other run says nothing.
+// skill's Result: line) is 'built' or 'asked', and a review run that merged or held a PR is
+// 'reviewed'; any other run says nothing.
 export function notification(records, { repo, agent }) {
   const mine = records.filter((r) => r.repo === repo && r.agent === agent)
   const last = mine.at(-1)
@@ -44,6 +50,7 @@ export function notification(records, { repo, agent }) {
   const summary = last.summary ?? ''
   if (BUILT.test(summary)) return { kind: 'built', last }
   if (ASKED.test(summary)) return { kind: 'asked', last }
+  if (agent === 'review' && REVIEWED.test(summary)) return { kind: 'reviewed', last }
   return null
 }
 
@@ -64,13 +71,22 @@ export function discordMessage({ kind, count, last }, { repo, agent }) {
     ],
     built: [`nightshift: ${what} opened a PR.`, detail && `Result: ${detail}`],
     asked: [`nightshift: ${what} left a question and needs your answer.`, detail && `Result: ${detail}`],
+    reviewed: [
+      NEEDS_OWNER.test(last.summary ?? '')
+        ? `nightshift: ${what} finished; a PR waits on you.`
+        : `nightshift: ${what} finished.`,
+      detail && `Result: ${detail}`,
+    ],
   }[kind]
-  return {
-    username: 'nightshift',
-    content: lines.filter(Boolean).join('\n'),
-    allowed_mentions: { parse: [] },
-  }
+  return ownerMessage(lines.filter(Boolean).join('\n'))
 }
+
+// A webhook body: no mention in it ever pings anyone.
+export const ownerMessage = (content) => ({
+  username: 'nightshift',
+  content,
+  allowed_mentions: { parse: [] },
+})
 
 export async function postWebhook(url, body, { timeoutMs = 5000, fetchImpl = fetch } = {}) {
   const response = await fetchImpl(url, {
@@ -85,20 +101,35 @@ export async function postWebhook(url, body, { timeoutMs = 5000, fetchImpl = fet
 // Sends the message a run's outcome calls for, if there is a webhook. Never throws: a webhook that
 // is missing, unreadable, refused or slow must not change what the run reports. Returns one line
 // for the log, or null when there was nothing to say or no webhook.
-export async function notifyOutcome(
-  records,
-  who,
+export async function notifyOutcome(records, who, deps = {}) {
+  let note
+  try {
+    note = notification(records, who)
+  } catch (error) {
+    return `discord: not sent: ${toAscii(error.message ?? error, REASON_CHARS)}`
+  }
+  if (!note) return null
+  const { line } = await sendDiscord(discordMessage(note, who), deps)
+  return line === 'discord: sent' ? `discord: sent (${note.kind})` : line
+}
+
+// Posts one webhook body. Never throws. `done`: delivered, or there is no webhook, so it never
+// will be and isn't worth trying again; `line`: one line for the log, or null with no webhook.
+export async function sendDiscord(
+  body,
   { path = webhookPath(), read = readSecret, post = postWebhook } = {},
 ) {
   try {
-    const note = notification(records, who)
-    if (!note || !existsSync(path)) return null
+    if (!existsSync(path)) return { done: true, line: null }
     const url = read(path)
     if (!isDiscordWebhook(url))
-      return 'discord: not sent; the stored URL is not a Discord webhook (nightshift.ps1 discord)'
-    await post(url, discordMessage(note, who))
-    return `discord: sent (${note.kind})`
+      return {
+        done: false,
+        line: 'discord: not sent; the stored URL is not a Discord webhook (nightshift.ps1 discord)',
+      }
+    await post(url, body)
+    return { done: true, line: 'discord: sent' }
   } catch (error) {
-    return `discord: not sent: ${toAscii(error.message ?? error, REASON_CHARS)}`
+    return { done: false, line: `discord: not sent: ${toAscii(error.message ?? error, REASON_CHARS)}` }
   }
 }

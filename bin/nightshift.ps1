@@ -10,11 +10,12 @@
 #   nightshift.ps1 watch [-Off]               the 90-minute watcher (a Windows scheduled task)
 #   nightshift.ps1 tick                       one watcher pass: Tier 0 for every enabled repo
 #   nightshift.ps1 token [-Off]               the fine-grained GitHub token the agents use
-#   nightshift.ps1 discord [-Off]             the Discord webhook that hears when a repo is stuck
+#   nightshift.ps1 discord [-Off]             the Discord webhook nightshift tells the owner things on
+#   nightshift.ps1 digest                     sends the daily digest now
 #   nightshift.ps1 tidy [<checkout>] [-DryRun]  deletes merged local branches and their clean worktrees
 param(
   [Parameter(Mandatory, Position = 0)]
-  [ValidateSet('register', 'unregister', 'enable', 'disable', 'status', 'trigger', 'watch', 'tick', 'token', 'discord', 'tidy', 'logs')]
+  [ValidateSet('register', 'unregister', 'enable', 'disable', 'status', 'trigger', 'watch', 'tick', 'token', 'discord', 'digest', 'tidy', 'logs')]
   [string]$Command,
   [Parameter(Position = 1)][string]$Target,
   [Parameter(Position = 2)][string]$Agent,
@@ -196,6 +197,8 @@ switch ($Command) {
     Write-Output "`nWatcher: $(if ($task) { $task.State } else { 'not installed' })"
     Write-Output "Discord: $(if (Test-Path $NsDiscord) { 'a webhook is set' } else { 'no webhook (nightshift.ps1 discord)' })"
     Write-Output "GitHub:  $(if (Test-Path $NsToken) { 'the nightshift token' } else { 'your own gh login (nightshift.ps1 token narrows it)' })"
+    $alerts = node (Join-Path $NsRoot 'bin\preflight.mjs') alerts | Out-String | ConvertFrom-Json
+    if ($alerts.lines) { Write-Output "`nNeeds you:"; $alerts.lines | ForEach-Object { Write-Output "  $_" } }
     $log = Join-Path $NsHome 'logs\nightshift.log'
     if (Test-Path $log) { Write-Output "`nRecent:"; Get-Content $log -Tail 15 }
   }
@@ -243,11 +246,26 @@ switch ($Command) {
     # Once a day, from the first pass after 9 PM, before this pass can start a run that takes a
     # repo's lock (DESIGN.md, "Tidying checkouts"). It logs its own lines.
     node (Join-Path $NsRoot 'bin\tidy.mjs') --all --daily | Out-Null
+    # Before the repos: a long gap since the last pass is noted for the digest (lib/alerts.mjs).
+    node (Join-Path $NsRoot 'bin\preflight.mjs') tick | Out-Null
     foreach ($entry in Get-NsRepos | Where-Object { $_.enabled -ne $false }) {
       & (Join-Path $PSScriptRoot 'trigger.ps1') -Agent review -Repo $entry.name
       & (Join-Path $PSScriptRoot 'trigger.ps1') -Agent build -Repo $entry.name
     }
+    # A pass with runs takes hours; the gap is measured from when this one ends.
+    node (Join-Path $NsRoot 'bin\preflight.mjs') tick --end | Out-Null
+    # After the repos, so it has this pass's waiting lists: once a day, from the first pass after 8 AM.
+    $digest = node (Join-Path $NsRoot 'bin\preflight.mjs') digest | Out-String
+    if ($LASTEXITCODE -eq 0) { Write-NsLog ($digest | ConvertFrom-Json).notice }
+    elseif ($LASTEXITCODE -ne 10) { Write-NsLog "digest: failed: $(($digest | ConvertFrom-Json).reason)" }
     Test-NsUpdate
+  }
+  'digest' {
+    $digest = node (Join-Path $NsRoot 'bin\preflight.mjs') digest --force | Out-String | ConvertFrom-Json
+    if ($digest.status -ne 'work') { Fail $digest.reason }
+    Write-NsLog $digest.notice
+    Write-Output $digest.text
+    Write-Output "`n$($digest.notice)"
   }
   'tidy' {
     $tidyArgs = @(if ($Target) { (Resolve-Path $Target).Path } else { '--all' })
@@ -268,7 +286,7 @@ switch ($Command) {
     if ($url -notmatch '^https://(?:(?:ptb|canary)\.)?discord(?:app)?\.com/api/webhooks/\d+/[\w-]+$') {
       Fail "That isn't a Discord webhook URL; nothing changed."
     }
-    $test = @{ username = 'nightshift'; content = 'nightshift: this channel will hear when a repo is stuck.'; allowed_mentions = @{ parse = @() } }
+    $test = @{ username = 'nightshift'; content = 'nightshift: this channel will hear what the agents did, what is stopping them, what waits on you, and a daily digest.'; allowed_mentions = @{ parse = @() } }
     try {
       Invoke-RestMethod -Uri $url -Method Post -ContentType 'application/json' -Body ($test | ConvertTo-Json -Depth 3) -TimeoutSec 15 | Out-Null
     } catch {
