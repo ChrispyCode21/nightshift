@@ -29,13 +29,13 @@ export function runFailure({ exitCode, timedOut = false, log = '' }) {
 // The log's text is data from a run that read issues and PRs: it is printed, never executed or fed
 // to a model. Reduced to printable ASCII it can't fake log lines or escape sequences, and survives
 // the code pages Windows PowerShell 5.1 reads node's output and nightshift.log in.
-const REPLACEMENTS = { '–': '-', '—': '-', '‘': "'", '’': "'", '“': '"', '”': '"', '…': '...' }
+const REPLACEMENTS = { '–': '-', '—': '-', '‘': "'", '’': "'", '“': '"', '”': '"', '…': '...', '·': '-' }
 
 export function toAscii(text, max = Infinity) {
   const clean = String(text)
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, '') // OSC, e.g. a terminal title
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '') // CSI, e.g. colors
-    .replace(/[–—‘’“”…]/g, (c) => REPLACEMENTS[c])
+    .replace(/[–—‘’“”…·]/g, (c) => REPLACEMENTS[c])
     .replace(/\s+/g, ' ') // also stops text from starting a new log line
     .replace(/[^\x20-\x7e]/g, '?') // remaining control characters and non-ASCII
     .trim()

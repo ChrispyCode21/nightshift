@@ -21,7 +21,7 @@ $ns = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Ra
 
 Optionally, give the agents a fine-grained GitHub token scoped to the registered repos, instead of your full gh login (DESIGN.md, "GitHub access" lists the permissions): `nightshift.ps1 token`.
 
-Optionally, get a Discord message when something needs you: the builder opened a PR, the builder left a question on an issue (`Result: built PR <n>` or `need answers on issue <m>`), or a repo's agent is stuck (three runs in a row that came to nothing, so it now waits 2 hours between tries) and when it recovers. Runs that find nothing to do stay quiet. Create a webhook in a channel's settings, then `nightshift.ps1 discord`.
+Optionally, get a Discord message when something needs you: the builder opened a PR or left a question on an issue; a review run merged or held a PR; a repo's agent is stuck (three runs in a row that came to nothing, so it now waits 2 hours between tries) and when it recovers; a check keeps every run from starting (Claude Code logged out, an unreadable GitHub token, a checkout that won't refresh) and when it works again; and a repo has work that waits on you (issues the builder skips, PRs it won't review or has held). A digest comes every morning, so a missing one means the watcher has stopped. Runs that find nothing to do stay quiet. Create a webhook in a channel's settings, then `nightshift.ps1 discord`.
 
 After the first registration, `%USERPROFILE%\.nightshift\run.ps1 nightshift.ps1 <command>` runs the installed version from anywhere.
 
@@ -50,12 +50,13 @@ The builder skips issues labeled `agent-needs-info`, `agent-followup`, `question
 | `register <checkout>` | opts a checkout in on this machine (the repo must have its config file) and creates the standard labels in the repo |
 | `unregister <name>` | removes the hook and the entry; leaves the checkouts |
 | `enable` / `disable <name>` | pauses a repo without touching its code |
-| `status` | the registered repos, the watcher, and the last 15 log lines (each run ends with what it did) |
+| `status` | the registered repos, the watcher, what needs you, and the last 15 log lines (each run ends with what it did) |
 | `trigger <name> build\|review` | runs one agent for one repo now, if Tier 0 finds work, and prints what it does as it goes |
 | `logs [<name>]` / `logs -List` | prints the newest run log (for one repo), or lists the last 20 runs from `runs.jsonl` |
 | `watch` / `watch -Off` | installs or removes the 90-minute watcher |
 | `token` / `token -Off` | sets or removes the fine-grained GitHub token the agents use |
-| `discord` / `discord -Off` | sets or removes the Discord webhook that hears about PRs opened, questions left and stuck repos (DESIGN.md, "Back-off") |
+| `discord` / `discord -Off` | sets or removes the Discord webhook nightshift tells you things on (DESIGN.md, "Telling the owner") |
+| `digest` | sends the daily digest now and prints it |
 | `tidy [<checkout>] [-DryRun]` | deletes local branches whose work is on `main` and their clean worktrees; the watcher runs it nightly after 9 PM (DESIGN.md, "Tidying checkouts") |
 
 State (registry, locks, logs, and `runs.jsonl`, one record per run) lives in `%USERPROFILE%\.nightshift\`.

@@ -11,6 +11,7 @@ import {
   notification,
   notifyOutcome,
   postWebhook,
+  sendDiscord,
 } from '../bin/lib/notify.mjs'
 
 const PREFLIGHT = fileURLToPath(new URL('../bin/preflight.mjs', import.meta.url))
@@ -73,6 +74,50 @@ test('notification: a run that opened a PR or left a question says so; other run
   // a run that gets past a stuck streak is "recovered", not "built"
   assert.equal(notification([failed(), failed(), failed(), rec()], WHO).kind, 'recovered')
   assert.equal(notification([{ ...rec(), repo: 'bar' }], WHO), null)
+})
+
+test('notification: a review run that merged or held a PR says so; "no PRs due" does not', () => {
+  const REVIEW = { repo: 'foo', agent: 'review' }
+  const review = (summary) => ({ ...rec({ summary }), agent: 'review' })
+  assert.equal(notification([review('merged PR 3; held PR 4 (checks failing)')], REVIEW).kind, 'reviewed')
+  assert.equal(notification([review('ready for owner PR 5 (high risk)')], REVIEW).kind, 'reviewed')
+  assert.equal(notification([review('no PRs due')], REVIEW), null)
+  const merged = discordMessage({ kind: 'reviewed', last: review('merged PR 3') }, REVIEW)
+  assert.equal(merged.content, 'nightshift: foo review finished.\nResult: merged PR 3')
+  const held = discordMessage(
+    { kind: 'reviewed', last: review('merged PR 3; held PR 4 (checks failing)') },
+    REVIEW,
+  )
+  assert.match(
+    held.content,
+    /^nightshift: foo review finished; a PR waits on you\.\nResult: merged PR 3; held PR 4/,
+  )
+  assert.deepEqual(held.allowed_mentions, { parse: [] })
+})
+
+test('sendDiscord: no webhook is done and says nothing; a refusal is not done', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nightshift-'))
+  try {
+    const path = join(dir, 'discord-webhook')
+    assert.deepEqual(await sendDiscord({ content: 'x' }, { path }), { done: true, line: null })
+    writeFileSync(path, 'encrypted')
+    const ok = await sendDiscord({ content: 'x' }, { path, read: () => URL_OK, post: async () => {} })
+    assert.deepEqual(ok, { done: true, line: 'discord: sent' })
+    const refused = await sendDiscord(
+      { content: 'x' },
+      {
+        path,
+        read: () => URL_OK,
+        post: async () => {
+          throw new Error('Discord answered 429')
+        },
+      },
+    )
+    assert.deepEqual(refused, { done: false, line: 'discord: not sent: Discord answered 429' })
+    assert.equal((await sendDiscord({}, { path, read: () => 'https://evil.example/x' })).done, false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('notification: another repo or agent never counts', () => {

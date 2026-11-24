@@ -10,8 +10,10 @@ import {
   isReviewable,
   overUsage,
   pickMilestone,
+  probeError,
   riskOf,
   usageFromStream,
+  whyNotReviewed,
 } from '../bin/lib/gates.mjs'
 
 test('pickMilestone: semver takes the lowest version and ignores other titles', () => {
@@ -210,4 +212,47 @@ test('overUsage: a window at or past its limit counts; one below does not', () =
   assert.match(overUsage(windows(0.1, 0.9))[0], /^seven_day 90%/)
   assert.equal(overUsage(windows(0.9, 0.95)).length, 2)
   assert.deepEqual(overUsage({ rejected: false }), []) // a window missing from the event
+})
+
+test('whyNotReviewed: drafts, forks, and PRs no listed author opened', () => {
+  const pr = (extra) => ({
+    number: 7,
+    headRefName: 'feature-x',
+    isDraft: false,
+    isCrossRepository: false,
+    ...extra,
+  })
+  assert.equal(whyNotReviewed(pr({ isDraft: true })), '#7 is a draft')
+  assert.equal(whyNotReviewed(pr({ isCrossRepository: true })), '#7 is from a fork')
+  assert.equal(
+    whyNotReviewed(pr()),
+    "#7 (feature-x) is not an agent or Dependabot PR, so nightshift won't review it",
+  )
+})
+
+test('probeError: the result line Claude Code prints on stdout when it cannot run', () => {
+  // As Claude Code 2.1 prints it when not logged in: exit 1, nothing on stderr.
+  const notLoggedIn = [
+    '{"type":"system","subtype":"init","model":"claude-haiku-5-5"}',
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"Not logged in · Please run /login"}]},"error":"authentication_failed"}',
+    '{"duration_api_ms":0,"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}',
+  ].join('\n')
+  assert.equal(
+    probeError({ stdout: notLoggedIn, stderr: '', status: 1 }),
+    'Not logged in · Please run /login',
+  )
+  // no result line: the assistant message's error
+  const [, assistant] = notLoggedIn.split('\n')
+  assert.equal(probeError({ stdout: assistant }), 'authentication_failed: Not logged in · Please run /login')
+  const apiError =
+    '{"type":"result","subtype":"error_during_execution","is_error":true,"api_error_status":529}'
+  assert.equal(probeError({ stdout: apiError }), 'error_during_execution (API 529)')
+  // a successful result isn't an error; stderr's last line, then the exit code
+  const ok = '{"type":"result","subtype":"success","is_error":false,"result":"Hi!"}'
+  assert.equal(
+    probeError({ stdout: ok, stderr: 'warn\nclaude: command not found\n', status: 1 }),
+    'claude: command not found',
+  )
+  assert.equal(probeError({ stdout: 'not json', status: 1 }), 'exit code 1, no output')
+  assert.equal(probeError({}), 'no output')
 })

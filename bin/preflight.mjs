@@ -15,6 +15,15 @@
 //   node preflight.mjs log --list                             the last 20 runs in runs.jsonl
 //   node preflight.mjs outcome --exit <code> --log <file> [--err <file>] --start <iso> --repo <name>
 //     --agent build|review [--timed-out]    exit 10 if a run failed; appends the run to runs.jsonl
+//   node preflight.mjs health --key <key> (--problem <why> | --ok)
+//                                                             records a check trigger.ps1 made itself
+//   node preflight.mjs tick [--end]                           a watcher pass began or ended (the digest's gaps)
+//   node preflight.mjs digest [--force]                       the daily digest, when due
+//   node preflight.mjs alerts                                 open problems and waiting lists, as lines
+//
+// With --notify (trigger.ps1 only; the skills run the same gates and stay quiet), `usage` and
+// `build|review` also record their result in alerts.json and tell the owner what lib/alerts.mjs
+// says is news, adding a `notice` line for the log.
 //
 // Prints one JSON object (with the repo's resolved config when there's work). Exit 0: there's work
 // (`status: "work"`); 10: nothing to do (`status: "idle"`, with `reason`); 1: it failed.
@@ -28,10 +37,21 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
 import { basename, join } from 'node:path'
+import {
+  alertLines,
+  alertText,
+  attentionStep,
+  digestDue,
+  digestText,
+  healthStep,
+  normalizeState,
+  tickStep,
+} from './lib/alerts.mjs'
 import { CONFIG_PATH, home, loadRegistry, resolveRepo } from './lib/config.mjs'
 import {
   buildCandidates,
@@ -41,13 +61,15 @@ import {
   isReviewable,
   overUsage,
   pickMilestone,
+  probeError,
   riskOf,
   USAGE_LIMITS,
   usageFromStream,
+  whyNotReviewed,
 } from './lib/gates.mjs'
 import { githubEnv } from './lib/github.mjs'
 import { lockHolder, lockPath } from './lib/locks.mjs'
-import { notifyOutcome } from './lib/notify.mjs'
+import { notifyOutcome, ownerMessage, sendDiscord } from './lib/notify.mjs'
 import {
   backoffUntil,
   decodeLog,
@@ -58,6 +80,7 @@ import {
   runFailure,
   runRecord,
   summarizeRun,
+  toAscii,
 } from './lib/runs.mjs'
 
 // Git reports "dubious ownership" for checkouts on drives that don't record owners (exFAT).
@@ -154,7 +177,7 @@ function build({ entry, config }) {
         .map((b) => b.number),
   })
   const where = milestone?.title ?? 'nightshift issues'
-  if (candidates.length === 0) return idle(`Nothing to build in ${where}.`, { waiting })
+  if (candidates.length === 0) return idle(`Nothing to build in ${where}.`, { waiting, where })
   return { status: 'work', milestone: milestone?.title ?? null, release: false, candidates, waiting }
 }
 
@@ -163,10 +186,16 @@ function review({ entry, config }) {
   const me = gh.me()
   const { authors, highRisk } = config.reviewer
   const branchPrefix = config.builder.branchPrefix
-  const prs = gh
+  const open = gh
     .prs('number,title,body,author,headRefName,isDraft,isCrossRepository,labels')
-    .filter((p) => isReviewable(p, { me, branchPrefix, authors }))
     .sort((a, b) => a.number - b.number)
+  // What's open but not due, for the owner (lib/alerts.mjs); it changes nothing the reviewer does.
+  const waiting = []
+  const prs = []
+  for (const pr of open) {
+    if (isReviewable(pr, { me, branchPrefix, authors })) prs.push(pr)
+    else waiting.push(whyNotReviewed(pr))
+  }
 
   const due = []
   for (const pr of prs) {
@@ -177,7 +206,10 @@ function review({ entry, config }) {
         .filter((e) => e.event === 'labeled' && e.label?.name === 'reviewed')
         .at(-1)?.created_at
       const { commits } = gh.json(['pr', 'view', String(pr.number), '-R', entry.github, '--json', 'commits'])
-      if (!isDue({ labels, labeledAt, commits, me })) continue
+      if (!isDue({ labels, labeledAt, commits, me })) {
+        waiting.push(`#${pr.number} reviewed; held or ready for you to merge`)
+        continue
+      }
     }
     const { files } = gh.json(['pr', 'view', String(pr.number), '-R', entry.github, '--json', 'files'])
     const risk = riskOf(
@@ -186,8 +218,9 @@ function review({ entry, config }) {
     )
     due.push({ number: pr.number, title: pr.title, branch: pr.headRefName, ...risk })
   }
-  if (due.length === 0) return idle('No PRs due.')
-  return { status: 'work', prs: due }
+  waiting.sort((a, b) => Number(/\d+/.exec(a)) - Number(/\d+/.exec(b)))
+  if (due.length === 0) return idle('No PRs due.', { waiting })
+  return { status: 'work', prs: due, waiting }
 }
 
 // The owner's plan usage, read from one tiny headless run on the cheapest model: Claude Code reports
@@ -206,7 +239,14 @@ function usage() {
   } catch (error) {
     // A run refused at the limit can still have printed its rate_limit_event.
     out = String(error.stdout ?? '')
-    if (!usageFromStream(out)) throw error
+    if (!usageFromStream(out)) {
+      const why = probeError({
+        stdout: out,
+        stderr: String(error.stderr ?? ''),
+        status: error.status ?? null,
+      })
+      throw new Error(`the usage probe (claude -p) failed: ${toAscii(why, 200)}`)
+    }
   }
   const windows = usageFromStream(out)
   // No event: Claude Code had nothing to report. So far it has only been seen once a window passed
@@ -216,6 +256,106 @@ function usage() {
   if (windows.rejected) over.unshift('usage limit reached')
   if (over.length) return idle(`Plan usage near its limit: ${over.join(', ')}.`, { limits: USAGE_LIMITS })
   return { status: 'work', reason: 'Usage below the limits.', windows }
+}
+
+const alertsFile = () => join(home(), 'alerts.json')
+const readRuns = () => {
+  const file = join(home(), 'runs.jsonl')
+  return existsSync(file) ? parseRuns(readFileSync(file, 'utf8')) : []
+}
+
+function loadAlerts() {
+  try {
+    return normalizeState(JSON.parse(readFileSync(alertsFile(), 'utf8')))
+  } catch {
+    return normalizeState(null)
+  }
+}
+
+// Read again just before writing, and written whole through a temporary file, so a watcher pass
+// and a hook-started run at the same moment each lose at most their own change, which the next
+// pass makes again.
+function updateAlerts(change) {
+  const state = change(loadAlerts())
+  mkdirSync(home(), { recursive: true })
+  const tmp = `${alertsFile()}.${process.pid}.tmp`
+  writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`)
+  try {
+    renameSync(tmp, alertsFile())
+  } catch {
+    rmSync(tmp, { force: true })
+  }
+}
+
+// One check's result (`problem`: why it failed, or null); returns a line for the log, or null.
+async function checkHealth(key, problem) {
+  const now = new Date()
+  const before = loadAlerts().health[key]
+  const { entry, message } = healthStep(before, { problem, now })
+  if (!before && !entry) return null
+  let line = null
+  let next = entry
+  if (message) {
+    const sent = await sendDiscord(ownerMessage(alertText(message, key)))
+    line = `alert ${message.kind}: ${key}: ${sent.line ?? 'no webhook'}`
+    if (sent.done && next) next = { ...next, alertedAt: now.toISOString() }
+  }
+  updateAlerts((state) => {
+    const health = { ...state.health }
+    if (next) health[key] = next
+    else delete health[key]
+    return { ...state, health }
+  })
+  return line
+}
+
+// What waits on the owner for one repo's agent (`items` undefined: the gate didn't look).
+async function checkAttention(key, items, title) {
+  const before = loadAlerts().attention[key]
+  const { entry, message } = attentionStep(before, { items, title, now: new Date() })
+  if (!before && !entry) return null
+  let line = null
+  let next = entry
+  if (message) {
+    const sent = await sendDiscord(ownerMessage(alertText(message, key)))
+    line = `alert waiting: ${key}: ${sent.line ?? 'no webhook'}`
+    if (sent.done) next = { ...next, notified: true }
+  }
+  updateAlerts((state) => {
+    const attention = { ...state.attention }
+    if (next) attention[key] = next
+    else delete attention[key]
+    return { ...state, attention }
+  })
+  return line
+}
+
+// --notify: a gate's result as health and attention. The gate ran, so the token was read and the
+// checkout refreshed: those checks passed for this repo and agent.
+async function notifyGate(mode, result) {
+  const failed = result.status === 'error' ? result.reason : null
+  if (mode === 'usage')
+    return [
+      await checkHealth('usage', failed?.replace(/^the usage probe \(claude -p\) failed: /, '') ?? null),
+    ]
+  const repo = option('--repo')
+  const lines = [
+    await checkHealth('token', null),
+    await checkHealth(`refresh ${repo} ${mode}`, null),
+    await checkHealth(`gate ${repo} ${mode}`, failed),
+  ]
+  if (!failed) {
+    // The reviewer's list stands whether or not other PRs are due. The builder's waits on the owner
+    // only when nothing else can be built; with work, the run comes next and the list is left as
+    // it was, so it isn't announced again after every run.
+    const items = mode === 'review' || result.status === 'idle' ? result.waiting : undefined
+    const title =
+      mode === 'build'
+        ? `open issues in ${result.where ?? 'its milestone'}, but none the builder can take`
+        : 'open PRs, but none due for review'
+    lines.push(await checkAttention(`${repo} ${mode}`, items, title))
+  }
+  return lines
 }
 
 function repos() {
@@ -255,9 +395,8 @@ try {
       process.stdout.write(decodeLog(readFileSync(option('--file'))))
       process.exit(0)
     }
-    const runsFile = join(home(), 'runs.jsonl')
     if (flag('--list')) {
-      const records = existsSync(runsFile) ? parseRuns(readFileSync(runsFile, 'utf8')) : []
+      const records = readRuns()
       result = records.length
         ? { status: 'work', reason: 'Recent runs.', lines: records.slice(-20).map(formatRun) }
         : idle('No runs recorded yet.')
@@ -317,6 +456,30 @@ try {
             `${wait.count} run${wait.count === 1 ? '' : 's'} in a row came to nothing; trying again in ${minutes} minutes`,
           )
         : { status: 'work', reason: 'No backoff.' }
+  } else if (mode === 'health') {
+    const key = option('--key')
+    if (!key || flag('--ok') === Boolean(option('--problem')))
+      throw new Error('Usage: health --key <key> (--problem <why> | --ok)')
+    const notice = await checkHealth(key, flag('--ok') ? null : option('--problem'))
+    result = { status: 'work', reason: 'Recorded.', ...(notice && { notice }) }
+  } else if (mode === 'tick') {
+    updateAlerts((state) => tickStep(state, new Date(), { end: flag('--end') }))
+    result = { status: 'work', reason: 'Recorded.' }
+  } else if (mode === 'digest') {
+    const now = new Date()
+    const state = loadAlerts()
+    if (!flag('--force') && !digestDue(state.lastDigest, now)) result = idle('Digest not due.')
+    else {
+      const repos = loadRegistry()
+        .repos.filter((r) => r.enabled !== false)
+        .map((r) => r.name)
+      const text = digestText({ state, records: readRuns(), repos, now })
+      const sent = await sendDiscord(ownerMessage(text))
+      if (sent.done) updateAlerts((s) => ({ ...s, lastDigest: now.toISOString(), gaps: [] }))
+      result = { status: 'work', reason: 'Digest.', notice: `digest: ${sent.line ?? 'no webhook'}`, text }
+    }
+  } else if (mode === 'alerts') {
+    result = { status: 'work', reason: 'Alerts.', lines: alertLines(loadAlerts()) }
   } else if (mode === 'lock') {
     if (!['build', 'review'].includes(agent) || !option('--repo'))
       throw new Error('Usage: lock build|review --repo <name>')
@@ -338,10 +501,19 @@ try {
     }
   } else
     throw new Error(
-      'Usage: preflight.mjs repos | peak | usage | build|review --repo <name> | release|lock|backoff build|review --repo <name>',
+      'Usage: preflight.mjs repos | peak | usage | build|review --repo <name> | release|lock|backoff build|review --repo <name> | health | tick | digest | alerts',
     )
 } catch (error) {
   result = { status: 'error', reason: String(error.stderr || error.message).trim() }
+}
+// Telling the owner never changes what the gate reports.
+if (flag('--notify') && ['usage', 'build', 'review'].includes(args[0])) {
+  try {
+    const lines = (await notifyGate(args[0], result)).filter(Boolean)
+    if (lines.length) result.notice = lines.join('; ')
+  } catch (error) {
+    result.notice = `alerts: ${toAscii(error.message ?? error, 200)}`
+  }
 }
 console.log(JSON.stringify(result, null, 2))
 process.exit({ work: 0, idle: 10 }[result.status] ?? 1)

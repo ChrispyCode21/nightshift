@@ -38,6 +38,38 @@ export function usageFromStream(text) {
   return found
 }
 
+// Why the usage probe failed, from its output: Claude Code reports a run it couldn't make (not
+// logged in, an expired token, an API error) on stdout, in the stream's `result` line or an
+// assistant message's `error`, and often prints nothing on stderr. Falls back to the last line of
+// stderr, then the exit code. Raw text: the caller cuts it to printable ASCII.
+export function probeError({ stdout = '', stderr = '', status = null }) {
+  let found = null
+  for (const line of stdout.split('\n')) {
+    if (!line.includes('"type"')) continue
+    try {
+      const event = JSON.parse(line)
+      if (event.type === 'result' && (event.is_error || event.subtype !== 'success')) {
+        const detail = typeof event.result === 'string' && event.result.trim() ? event.result : event.subtype
+        const code = event.api_error_status ? ` (API ${event.api_error_status})` : ''
+        found = `${detail}${code}`
+      } else if (event.type === 'assistant' && event.error && !found) {
+        const text = event.message?.content?.find?.((c) => c.type === 'text')?.text
+        found = text ? `${event.error}: ${text}` : String(event.error)
+      }
+    } catch {
+      // not a JSON line
+    }
+  }
+  if (found) return found
+  const last = stderr
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .at(-1)
+  if (last) return last
+  return status === null ? 'no output' : `exit code ${status}, no output`
+}
+
 // The windows at or past their limits, as "five_hour 87% (resets <time>)".
 export function overUsage(windows, limits = USAGE_LIMITS) {
   return Object.entries(limits)
@@ -114,6 +146,14 @@ export function isReviewable(pr, { me, branchPrefix, authors }) {
   if (authors.includes('agent') && pr.headRefName.startsWith(branchPrefix) && pr.author.login === me)
     return true
   return authors.filter((a) => a !== 'agent').includes(pr.author.login)
+}
+
+// Why the reviewer leaves an open PR alone, as a waiting line for the owner: one isReviewable
+// turns down will never be reviewed unless the owner acts.
+export function whyNotReviewed(pr) {
+  if (pr.isDraft) return `#${pr.number} is a draft`
+  if (pr.isCrossRepository) return `#${pr.number} is from a fork`
+  return `#${pr.number} (${pr.headRefName}) is not an agent or Dependabot PR, so nightshift won't review it`
 }
 
 // Due: never reviewed, or someone other than the owner committed since the `reviewed` label went on.

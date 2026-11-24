@@ -35,7 +35,21 @@ function Log($message) {
   Write-NsLog "[$name $Agent] $message"
   if ($env:NIGHTSHIFT_ECHO) { Write-Host "[$name $Agent] $message" }
 }
-if (-not (Use-NsToken)) { Log "couldn't read the nightshift GitHub token; nothing run (nightshift.ps1 token)"; exit 1 }
+# Logs the notice line preflight.mjs adds when it told the owner something (lib/alerts.mjs).
+function Write-NsNotice($json) {
+  try { $notice = ($json | ConvertFrom-Json).notice } catch { $notice = $null }
+  if ($notice) { Log $notice }
+}
+# A check this script makes itself, failed: recorded so it becomes an alert if it keeps failing.
+# The gate's --notify records it as passed.
+function Write-NsProblem($key, $problem) {
+  Write-NsNotice (node (Join-Path $NsRoot 'bin\preflight.mjs') health --key $key --problem $problem | Out-String)
+}
+if (-not (Use-NsToken)) {
+  Log "couldn't read the nightshift GitHub token; nothing run (nightshift.ps1 token)"
+  Write-NsProblem 'token' "couldn't read the nightshift GitHub token"
+  exit 1
+}
 $work = if ($Agent -eq 'build' -and $entry.builder) { $entry.builder }
   elseif ($Agent -eq 'review' -and $entry.reviewer) { $entry.reviewer }
   else { $entry.checkout }
@@ -87,9 +101,16 @@ try {
   }
   git -C $work fetch origin --prune 2>&1 | Out-Null
   git -C $work checkout --detach origin/HEAD 2>&1 | Out-Null
-  if ($LASTEXITCODE -ne 0) { Log "couldn't refresh $work (local changes?)"; exit 1 }
-  $gate = node (Join-Path $NsRoot 'bin\preflight.mjs') $Agent --repo $name | Out-String
   if ($LASTEXITCODE -ne 0) {
+    Log "couldn't refresh $work (local changes?)"
+    Write-NsProblem "refresh $name $Agent" "couldn't check out origin/HEAD in $work (local changes?)"
+    exit 1
+  }
+  # --notify: the gate also records what waits on the owner and tells them when it changes.
+  $gate = node (Join-Path $NsRoot 'bin\preflight.mjs') $Agent --repo $name --notify | Out-String
+  $gateExit = $LASTEXITCODE
+  Write-NsNotice $gate
+  if ($gateExit -ne 0) {
     $result = $gate | ConvertFrom-Json
     Log "$($result.status): $($result.reason)"
     exit 0
@@ -112,8 +133,10 @@ try {
   # 5. Plan usage: near the 5-hour or weekly limit, leave the rest to the owner. The next watcher
   # pass checks again.
   if (-not $Now) {
-    $usage = node (Join-Path $NsRoot 'bin\preflight.mjs') usage | Out-String
-    if ($LASTEXITCODE -ne 0) {
+    $usage = node (Join-Path $NsRoot 'bin\preflight.mjs') usage --notify | Out-String
+    $usageExit = $LASTEXITCODE
+    Write-NsNotice $usage
+    if ($usageExit -ne 0) {
       $result = $usage | ConvertFrom-Json
       Log "not running: $($result.reason)"
       exit 0
