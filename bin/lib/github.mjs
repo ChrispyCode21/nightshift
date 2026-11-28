@@ -9,7 +9,7 @@ import { readSecret } from './secret.mjs'
 // run, …) is refused, so an agent misled by text in an issue can't reach it through gh.mjs.
 export const GH_COMMANDS = {
   api: null, // any endpoint, GET or POST only (see API_METHODS)
-  issue: ['comment', 'create', 'edit', 'list', 'view'],
+  issue: ['close', 'comment', 'create', 'edit', 'list', 'view'],
   label: ['create', 'list'],
   pr: ['checks', 'comment', 'create', 'diff', 'edit', 'list', 'merge', 'view'],
   repo: ['view'],

@@ -8,12 +8,14 @@ import {
   isOpenBlocker,
   isPeak,
   isReviewable,
+  nextMilestone,
   overUsage,
   pickMilestone,
   probeError,
   riskOf,
   usageFromStream,
   whyNotReviewed,
+  withFollowUps,
 } from '../bin/lib/gates.mjs'
 
 test('pickMilestone: semver takes the lowest version and ignores other titles', () => {
@@ -33,6 +35,30 @@ test('pickMilestone: any takes the oldest; none takes nothing', () => {
   ]
   assert.equal(pickMilestone(ms, 'any').title, 'Now')
   assert.equal(pickMilestone(ms, 'none'), null)
+})
+
+test('nextMilestone: the one after the milestone being built, in the same order', () => {
+  const versions = [
+    { number: 1, title: 'Backlog' },
+    { number: 4, title: 'v1.10.0' },
+    { number: 3, title: 'v1.9.2' },
+  ]
+  assert.equal(nextMilestone(versions, 'semver').title, 'v1.10.0')
+  const any = [
+    { number: 7, title: 'Later' },
+    { number: 2, title: 'Now' },
+  ]
+  assert.equal(nextMilestone(any, 'any').title, 'Later')
+})
+
+test('nextMilestone: nothing when there is no later milestone, or none are used', () => {
+  const one = [
+    { number: 1, title: 'Backlog' },
+    { number: 2, title: 'v1.0.0' },
+  ]
+  assert.equal(nextMilestone(one, 'semver'), null)
+  assert.equal(nextMilestone([], 'any'), null)
+  assert.equal(nextMilestone(one, 'none'), null)
 })
 
 const issue = (number, extra = {}) => ({
@@ -255,4 +281,32 @@ test('probeError: the result line Claude Code prints on stdout when it cannot ru
   )
   assert.equal(probeError({ stdout: 'not json', status: 1 }), 'exit code 1, no output')
   assert.equal(probeError({}), 'no output')
+})
+
+test('withFollowUps: follow-ups with no milestone are work when there is nothing else', () => {
+  const idle = { status: 'idle', reason: 'Nothing to build in v1.0.0.', waiting: ['#2 on-hold'] }
+  const candidates = [{ number: 5, title: 'f' }]
+  assert.deepEqual(withFollowUps(idle, { candidates, waiting: ['#6 on-hold'] }), {
+    status: 'work',
+    milestone: null,
+    release: false,
+    candidates,
+    waiting: ['#2 on-hold', '#6 on-hold'],
+  })
+})
+
+test('withFollowUps: with none to take it stays idle, listing each waiting issue once', () => {
+  const idle = { status: 'idle', reason: 'r', waiting: ['#2 on-hold'] }
+  assert.deepEqual(withFollowUps(idle, { candidates: [], waiting: ['#2 on-hold'] }), idle)
+  const bare = { status: 'idle', reason: 'r' }
+  assert.deepEqual(withFollowUps(bare, { candidates: [], waiting: [] }), bare)
+})
+
+test('withFollowUps: one run takes only the oldest five', () => {
+  const candidates = [1, 2, 3, 4, 5, 6, 7].map((number) => ({ number, title: 'f' }))
+  const result = withFollowUps({ status: 'idle', reason: 'r' }, { candidates, waiting: [] })
+  assert.deepEqual(
+    result.candidates.map((c) => c.number),
+    [1, 2, 3, 4, 5],
+  )
 })

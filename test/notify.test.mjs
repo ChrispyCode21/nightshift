@@ -68,6 +68,11 @@ test('notification: a run that opened a PR or left a question says so; other run
   assert.equal(built.kind, 'built')
   assert.equal(notification([rec({ summary: 'built PR #12 for issue 5' })], WHO).kind, 'built')
   assert.equal(notification([rec({ summary: 'need answers on issue 5' })], WHO).kind, 'asked')
+  assert.equal(notification([rec({ summary: 'closed follow-up 7' })], WHO).kind, 'closed')
+  assert.equal(
+    notification([rec({ summary: 'built PR 12 for issue 5; closed follow-up 7' })], WHO).kind,
+    'built',
+  )
   for (const summary of ['nothing built: all candidates stopped', 'no PRs due', 'merged PR 3; held PR 4'])
     assert.equal(notification([rec({ summary })], WHO), null, summary)
   assert.equal(notification([failed()], WHO), null) // a failure is a setback, not news yet
@@ -285,4 +290,10 @@ test('preflight outcome: an unreadable webhook never changes what the run report
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('notification: a run that closed a follow-up is not one that came to nothing', () => {
+  const summary = 'nothing built: others stopped; closed follow-up 7'
+  assert.equal(notification([failed(), failed(), failed(), rec({ summary })], WHO).kind, 'recovered')
+  assert.equal(notification([rec({ summary })], WHO).kind, 'closed')
 })

@@ -19,13 +19,8 @@ test('defaults: every repo starts opted out of the optional features', () => {
   assert.equal(d.standards.baseline, true)
 })
 
-test('defaults: the builder skips issues that are waiting, followed up, questions or on hold', () => {
-  assert.deepEqual(defaults().builder.skipLabels, [
-    'agent-needs-info',
-    'agent-followup',
-    'question',
-    'on-hold',
-  ])
+test('defaults: the builder skips issues that are waiting, questions or on hold, not follow-ups', () => {
+  assert.deepEqual(defaults().builder.skipLabels, ['agent-needs-info', 'question', 'on-hold'])
 })
 
 test("merge: a repo's own skipLabels replaces the default list, so it must name on-hold itself", () => {

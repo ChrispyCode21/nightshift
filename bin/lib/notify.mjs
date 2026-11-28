@@ -1,6 +1,6 @@
 // Telling the owner what a run did (DESIGN.md, "Telling the owner"): one Discord message when a run
-// opens a PR, one when it leaves a question on an issue, one when a review run merges or holds a
-// PR, one when the back-off first reaches its longest wait, and one when a run gets past it. The
+// opens a PR, one when it leaves a question on an issue or closes a follow-up, one when a review
+// run merges or holds a PR, one when the back-off first reaches its longest wait, and one when a run gets past it. The
 // decision and the message are pure functions, unit-tested (test/notify.test.mjs); the I/O is
 // injected. lib/alerts.mjs decides the messages that don't come from a run.
 import { existsSync } from 'node:fs'
@@ -19,6 +19,7 @@ export const isDiscordWebhook = (url) => DISCORD_WEBHOOK.test(url)
 const REASON_CHARS = 200
 const BUILT = /\bbuilt PR #?\d+/i
 const ASKED = /\bneed answers on issue\b/i
+const CLOSED = /\bclosed follow-?up\b/i
 // The review skill's Result: line (review-prs SKILL.md): "merged PR 3; held PR 4 (why); ready for
 // owner PR 5 (why)". Held and ready-for-owner PRs wait on the owner.
 const REVIEWED = /\b(?:merged|held|ready for owner) PR #?\d+/i
@@ -29,7 +30,7 @@ const NEEDS_OWNER = /\b(?:held|ready for owner) PR #?\d+/i
 // wait, once per streak. 'recovered': a run that did something after a streak that got that far.
 // A streak counts the setbacks on record; a launcher that died with no record is not one of them.
 // Otherwise a run that finished with "built PR <n>" or "need answers on issue <m>" (the build
-// skill's Result: line) is 'built' or 'asked', and a review run that merged or held a PR is
+// skill's Result: line) is 'built' or 'asked' ('closed' when it only closed a follow-up), and a review run that merged or held a PR is
 // 'reviewed'; any other run says nothing.
 export function notification(records, { repo, agent }) {
   const mine = records.filter((r) => r.repo === repo && r.agent === agent)
@@ -50,6 +51,7 @@ export function notification(records, { repo, agent }) {
   const summary = last.summary ?? ''
   if (BUILT.test(summary)) return { kind: 'built', last }
   if (ASKED.test(summary)) return { kind: 'asked', last }
+  if (CLOSED.test(summary)) return { kind: 'closed', last }
   if (agent === 'review' && REVIEWED.test(summary)) return { kind: 'reviewed', last }
   return null
 }
@@ -71,6 +73,7 @@ export function discordMessage({ kind, count, last }, { repo, agent }) {
     ],
     built: [`nightshift: ${what} opened a PR.`, detail && `Result: ${detail}`],
     asked: [`nightshift: ${what} left a question and needs your answer.`, detail && `Result: ${detail}`],
+    closed: [`nightshift: ${what} closed a follow-up without building it.`, detail && `Result: ${detail}`],
     reviewed: [
       NEEDS_OWNER.test(last.summary ?? '')
         ? `nightshift: ${what} finished; a PR waits on you.`

@@ -16,7 +16,7 @@ export const STANDARD_LABELS = [
   {
     name: 'agent-followup',
     color: '0e8a16',
-    description: 'Follow-up the reviewer found out of scope; the builder skips it until this is removed',
+    description: 'Follow-up the reviewer found out of scope; the builder builds it or closes it',
   },
   {
     name: 'standards',
