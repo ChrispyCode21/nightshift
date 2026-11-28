@@ -1,0 +1,23 @@
+{
+  "checks": {
+    "install": "npm ci",
+    "fast": "npm test"
+  },
+  "builder": {
+    "milestones": "none",
+    "docs": ["README.md", "DESIGN.md"],
+    "neverEdit": [".github/workflows/", ".github/rulesets/", ".claude/", "bin/lib/github.mjs"]
+  },
+  "reviewer": {
+    "highRisk": {
+      "paths": [
+        "bin/trigger.ps1",
+        "bin/gh.mjs",
+        "bin/lib/gates.mjs",
+        "bin/lib/locks.mjs",
+        "skills/",
+        "agents/"
+      ]
+    }
+  }
+}
