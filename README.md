@@ -1,6 +1,6 @@
 # nightshift
 
-Off-peak builder and reviewer agents for any repo you opt in, packaged as a Claude Code plugin. They run on your Claude plan from the desktop app and the CLI, not on API credit. How it works and why: [DESIGN.md](DESIGN.md).
+Builder and reviewer agents for any repo you opt in, packaged as a Claude Code plugin. They run on your Claude plan from the desktop app and the CLI, not on API credit. How it works and why: [DESIGN.md](DESIGN.md).
 
 ## Install
 
@@ -41,9 +41,9 @@ The builder skips issues labeled `agent-needs-info`, `question` or `on-hold` (`b
 
 ## Run it
 
-- **Nightly:** two desktop scheduled tasks, `/nightshift:build-next-issue` at 2:00 AM and `/nightshift:review-prs` at 4:00 AM (local time; outside Anthropic's peak hours).
-- **When something happens:** `nightshift.ps1 watch` installs a Windows task that checks every registered repo every 90 minutes, waking the PC if it's asleep, at no token cost until there's work. During peak hours it defers the work to 11:05 AM Pacific.
-- **By hand:** `nightshift.ps1 trigger <repo> build|review` (`-Now` skips the peak-hours, back-off and usage checks).
+- **Nightly:** two desktop scheduled tasks, `/nightshift:build-next-issue` at 2:00 AM and `/nightshift:review-prs` at 4:00 AM (local time).
+- **When something happens:** `nightshift.ps1 watch` installs a Windows task that checks every registered repo every 90 minutes, waking the PC if it's asleep, at no token cost until there's work.
+- **By hand:** `nightshift.ps1 trigger <repo> build|review` (`-Now` skips the back-off and usage checks).
 
 ## Commands
 

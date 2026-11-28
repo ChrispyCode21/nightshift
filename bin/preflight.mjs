@@ -3,7 +3,6 @@
 // lib/gates.mjs; this file reads GitHub and the repo's config.
 //
 //   node preflight.mjs repos                                  the repos the agents may work on
-//   node preflight.mjs peak                                   exit 10 during peak hours
 //   node preflight.mjs usage                                  exit 10 when plan usage is near its limits
 //   node preflight.mjs build|review --repo <name> [--claim | --ignore-lock]
 //   node preflight.mjs release build|review --repo <name>     drop that run's lock
@@ -57,7 +56,6 @@ import {
   buildCandidates,
   isDue,
   isOpenBlocker,
-  isPeak,
   isReviewable,
   nextMilestone,
   overUsage,
@@ -397,8 +395,6 @@ let result
 try {
   const [mode, agent] = args
   if (mode === 'repos') result = repos()
-  else if (mode === 'peak')
-    result = isPeak() ? idle('Peak hours (5–11 AM Pacific).') : { status: 'work', reason: 'Off-peak.' }
   else if (mode === 'usage') result = usage()
   else if (mode === 'release') {
     if (!['build', 'review'].includes(agent) || !option('--repo'))
@@ -517,7 +513,7 @@ try {
     }
   } else
     throw new Error(
-      'Usage: preflight.mjs repos | peak | usage | build|review --repo <name> | release|lock|backoff build|review --repo <name> | health | tick | digest | alerts',
+      'Usage: preflight.mjs repos | usage | build|review --repo <name> | release|lock|backoff build|review --repo <name> | health | tick | digest | alerts',
     )
 } catch (error) {
   result = { status: 'error', reason: String(error.stderr || error.message).trim() }
