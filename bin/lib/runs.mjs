@@ -89,11 +89,15 @@ export const BACKOFF_MINUTES = [30, 60, 120]
 
 // The gate found work and the run still produced none: "Result: nothing built: <why>" or
 // "Result: no PRs due". Questions, holds and merges are progress: their label takes the item out
-// of the gate.
+// of the gate. So is closing a follow-up, whatever else the line says.
+const CLOSED = /\bclosed follow-?up\b/i
 const NOTHING_DONE = /^(nothing built|no PRs due)\b/i
 
 // A run that failed, timed out, was cut off, or found nothing to do after the gate said there was.
-export const setback = (record) => record.outcome !== 'finished' || NOTHING_DONE.test(record.summary ?? '')
+export const setback = (record) => {
+  const summary = record.summary ?? ''
+  return record.outcome !== 'finished' || (NOTHING_DONE.test(summary) && !CLOSED.test(summary))
+}
 
 // When the agent may run again for `repo`, from its runs.jsonl records (oldest first): the number
 // of setbacks in a row and the time they end, or null. `startedAt` is when trigger.ps1 last began a

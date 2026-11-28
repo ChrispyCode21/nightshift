@@ -31,10 +31,12 @@ GitHub labels belong to one repository; there are no account-wide labels. `regis
 
 Putting `on-hold` on an issue pauses that issue for the builder: it skips it and reports it as waiting. It doesn't pause the repo (`disable` does) or the reviewer. Remove the label to resume.
 
-The builder skips issues labeled `agent-needs-info`, `agent-followup`, `question` or `on-hold` (`builder.skipLabels` in `defaults/nightshift.json`). A repo whose own `.claude/nightshift.json` sets `builder.skipLabels` replaces that list (arrays replace, objects merge; `bin/lib/config.mjs`), so it must include `on-hold` itself:
+The reviewer files out-of-scope findings as `agent-followup` issues in the milestone after the one being built (no milestone if there isn't a later one). You don't have to do anything: when its turn comes (its milestone is the current one, or it has none and there's nothing else to build), the builder checks it against the current code and either builds it or closes it with the reason, or with the question it would have asked. Reopen one to have it handled like any other issue; close one yourself to reject it. Reviewing a follow-up's PR files no further follow-ups.
+
+The builder skips issues labeled `agent-needs-info`, `question` or `on-hold` (`builder.skipLabels` in `defaults/nightshift.json`). A repo whose own `.claude/nightshift.json` sets `builder.skipLabels` replaces that list (arrays replace, objects merge; `bin/lib/config.mjs`), so it must include `on-hold` itself:
 
 ```json
-{ "builder": { "skipLabels": ["agent-needs-info", "agent-followup", "question", "on-hold", "my-label"] } }
+{ "builder": { "skipLabels": ["agent-needs-info", "question", "on-hold", "my-label"] } }
 ```
 
 ## Run it

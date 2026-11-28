@@ -11,6 +11,7 @@ test('ghArgsProblem: the commands the skills and Tier 0 use are allowed', () => 
     ['pr', 'create', '-R', 'o/r', '--title', 't', '--body', 'b'],
     ['issue', 'create', '-R', 'o/r', '--label', 'agent-followup'],
     ['issue', 'comment', '7', '-R', 'o/r', '--body', 'b'],
+    ['issue', 'close', '7', '-R', 'o/r', '--reason', 'not planned', '--comment', 'c'],
     ['api', 'user', '--jq', '.login'],
     ['api', '-X', 'POST', 'repos/o/r/issues/7/sub_issues', '-F', 'sub_issue_id=99'],
     ['api', 'repos/o/r/issues/7/dependencies/blocked_by', '--method=POST', '-F', 'issue_id=1'],

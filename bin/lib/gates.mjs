@@ -91,14 +91,23 @@ const bySemver = (a, b) => a.v[0] - b.v[0] || a.v[1] - b.v[1] || a.v[2] - b.v[2]
 // The milestone the builder works in: "semver", the lowest open vX.Y.Z; "any", the oldest open
 // milestone; "none", no milestone (issues labeled `nightshift` instead).
 export function pickMilestone(milestones, mode) {
-  if (mode === 'none') return null
-  if (mode === 'any') return [...milestones].sort((a, b) => a.number - b.number)[0] ?? null
-  return (
-    milestones
-      .map((m) => ({ ...m, v: semver(m.title) }))
-      .filter((m) => m.v)
-      .sort(bySemver)[0] ?? null
-  )
+  return milestoneQueue(milestones, mode)[0] ?? null
+}
+
+// The milestone after that one, where the reviewer files follow-ups, so they never hold up the
+// release being built. Null when there's none yet: the reviewer doesn't make one up.
+export function nextMilestone(milestones, mode) {
+  return milestoneQueue(milestones, mode)[1] ?? null
+}
+
+// The open milestones in the order the builder takes them.
+function milestoneQueue(milestones, mode) {
+  if (mode === 'none') return []
+  if (mode === 'any') return [...milestones].sort((a, b) => a.number - b.number)
+  return milestones
+    .map((m) => ({ ...m, v: semver(m.title) }))
+    .filter((m) => m.v)
+    .sort(bySemver)
 }
 
 // Splits the open issues into what can be built now and what's waiting, and why. `openSubIssues`
@@ -134,6 +143,18 @@ export function buildCandidates({
     }
   }
   return { candidates, waiting }
+}
+
+// When the builder's own list has nothing to build, it takes the follow-ups that have no milestone
+// (filed when there was no later one), so none waits forever. `picked` is buildCandidates' result
+// for them; `idle` is what the gate would have said. A run gets only the oldest few, since each one
+// it closes costs a planning pass; the next run takes the rest.
+export const FOLLOW_UPS_PER_RUN = 5
+export function withFollowUps(idle, picked) {
+  const waiting = [...new Set([...(idle.waiting ?? []), ...picked.waiting])]
+  if (picked.candidates.length === 0) return waiting.length ? { ...idle, waiting } : idle
+  const candidates = picked.candidates.slice(0, FOLLOW_UPS_PER_RUN)
+  return { status: 'work', milestone: null, release: false, candidates, waiting }
 }
 
 // "Blocked by" counts until the blocker is closed as completed (not as "not planned").

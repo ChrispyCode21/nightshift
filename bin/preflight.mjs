@@ -59,6 +59,7 @@ import {
   isOpenBlocker,
   isPeak,
   isReviewable,
+  nextMilestone,
   overUsage,
   pickMilestone,
   probeError,
@@ -66,6 +67,7 @@ import {
   USAGE_LIMITS,
   usageFromStream,
   whyNotReviewed,
+  withFollowUps,
 } from './lib/gates.mjs'
 import { githubEnv } from './lib/github.mjs'
 import { lockHolder, lockPath } from './lib/locks.mjs'
@@ -140,45 +142,58 @@ function build({ entry, config }) {
   const open = prs.find((p) => p.headRefName.startsWith(branchPrefix))
   if (open) return idle(`Build PR #${open.number} still open.`)
 
-  const milestone = pickMilestone(gh.api('milestones?state=open&per_page=100'), mode)
-  if (mode !== 'none' && !milestone) return idle('No milestone to build from.')
-  const query = milestone ? `milestone=${milestone.number}` : 'labels=nightshift'
-  const issues = gh.api(`issues?${query}&state=open&per_page=100`).filter((i) => !i.pull_request)
-
-  if (issues.length === 0) {
-    if (!release || !milestone || mode !== 'semver')
-      return idle(`Nothing open in ${milestone?.title ?? 'nightshift issues'}.`)
-    const title = `Release ${milestone.title}`
-    const hasIssue = gh
-      .api(`issues?milestone=${milestone.number}&state=all&per_page=100`)
-      .some((i) => i.title === title)
-    if (hasIssue || gh.succeeds(['release', 'view', milestone.title, '-R', entry.github]))
-      return idle(`Milestone ${milestone.title} has nothing open and its release is under way.`)
-    return { status: 'work', milestone: milestone.title, release: true, candidates: [], waiting: [] }
+  const openIssues = (query) =>
+    gh.api(`issues?${query}&state=open&per_page=100`).filter((i) => !i.pull_request)
+  const pick = (issues) => {
+    // Through the registered checkout, so private repos use its remote and credentials.
+    const branches = run('git', ['ls-remote', '--heads', 'origin', `${branchPrefix}*`], entry.checkout)
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => line.split('refs/heads/')[1])
+    return buildCandidates({
+      issues,
+      me: gh.me(),
+      skipLabels,
+      closing: new Set(prs.flatMap((p) => p.closingIssuesReferences.map((r) => r.number))),
+      branches,
+      branchPrefix,
+      openSubIssues: (n) => gh.api(`issues/${n}/sub_issues?per_page=100`).some((s) => s.state === 'open'),
+      openBlockers: (n) =>
+        gh
+          .api(`issues/${n}/dependencies/blocked_by?per_page=100`)
+          .filter(isOpenBlocker)
+          .map((b) => b.number),
+    })
   }
 
-  // Through the registered checkout, so private repos use its remote and credentials.
-  const branches = run('git', ['ls-remote', '--heads', 'origin', `${branchPrefix}*`], entry.checkout)
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => line.split('refs/heads/')[1])
-  const { candidates, waiting } = buildCandidates({
-    issues,
-    me: gh.me(),
-    skipLabels,
-    closing: new Set(prs.flatMap((p) => p.closingIssuesReferences.map((r) => r.number))),
-    branches,
-    branchPrefix,
-    openSubIssues: (n) => gh.api(`issues/${n}/sub_issues?per_page=100`).some((s) => s.state === 'open'),
-    openBlockers: (n) =>
-      gh
-        .api(`issues/${n}/dependencies/blocked_by?per_page=100`)
-        .filter(isOpenBlocker)
-        .map((b) => b.number),
-  })
-  const where = milestone?.title ?? 'nightshift issues'
-  if (candidates.length === 0) return idle(`Nothing to build in ${where}.`, { waiting, where })
-  return { status: 'work', milestone: milestone?.title ?? null, release: false, candidates, waiting }
+  // The milestone's work (or the labeled issues, with milestones "none"), release included.
+  const planned = () => {
+    const milestone = pickMilestone(gh.api('milestones?state=open&per_page=100'), mode)
+    if (mode !== 'none' && !milestone) return idle('No milestone to build from.')
+    const issues = openIssues(milestone ? `milestone=${milestone.number}` : 'labels=nightshift')
+
+    if (issues.length === 0) {
+      if (!release || !milestone || mode !== 'semver')
+        return idle(`Nothing open in ${milestone?.title ?? 'nightshift issues'}.`)
+      const title = `Release ${milestone.title}`
+      const hasIssue = gh
+        .api(`issues?milestone=${milestone.number}&state=all&per_page=100`)
+        .some((i) => i.title === title)
+      if (hasIssue || gh.succeeds(['release', 'view', milestone.title, '-R', entry.github]))
+        return idle(`Milestone ${milestone.title} has nothing open and its release is under way.`)
+      return { status: 'work', milestone: milestone.title, release: true, candidates: [], waiting: [] }
+    }
+
+    const { candidates, waiting } = pick(issues)
+    const where = milestone?.title ?? 'nightshift issues'
+    if (candidates.length === 0) return idle(`Nothing to build in ${where}.`, { waiting, where })
+    return { status: 'work', milestone: milestone?.title ?? null, release: false, candidates, waiting }
+  }
+
+  const result = planned()
+  if (result.status !== 'idle') return result
+  const followUps = openIssues('labels=agent-followup&milestone=none')
+  return followUps.length ? withFollowUps(result, pick(followUps)) : result
 }
 
 function review({ entry, config }) {
@@ -220,7 +235,8 @@ function review({ entry, config }) {
   }
   waiting.sort((a, b) => Number(/\d+/.exec(a)) - Number(/\d+/.exec(b)))
   if (due.length === 0) return idle('No PRs due.', { waiting })
-  return { status: 'work', prs: due, waiting }
+  const later = nextMilestone(gh.api('milestones?state=open&per_page=100'), config.builder.milestones)
+  return { status: 'work', prs: due, waiting, followUpMilestone: later?.title ?? null }
 }
 
 // The owner's plan usage, read from one tiny headless run on the cheapest model: Claude Code reports

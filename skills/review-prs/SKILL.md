@@ -25,7 +25,7 @@ In the repo's reviewer checkout (the registry entry's `reviewer`, or `checkout`)
 node "$NS/bin/preflight.mjs" review --repo <name> --claim
 ```
 
-Exit 10: note "No PRs due." and go to the next repo. Exit 1: note the error, next repo. Exit 0: it took the lock; `prs` lists the due PRs, oldest first, each with `kind` (`agent`, `dependabot`, `dependabot-major`), `highRisk` and `touchesWorkflows`, and `config` is the repo's resolved config. **Whatever happens from here, finish the repo with `node "$NS/bin/preflight.mjs" release review --repo <name>`.** Take the PRs one at a time through steps 3–8. Each PR's working files go in `.agent-runs/pr-<n>/` in the reviewer checkout (overwrite anything left over).
+Exit 10: note "No PRs due." and go to the next repo. Exit 1: note the error, next repo. Exit 0: it took the lock; `prs` lists the due PRs, oldest first, each with `kind` (`agent`, `dependabot`, `dependabot-major`), `highRisk` and `touchesWorkflows`, `followUpMilestone` is where follow-up issues go (step 7; may be null), and `config` is the repo's resolved config. **Whatever happens from here, finish the repo with `node "$NS/bin/preflight.mjs" release review --repo <name>`.** Take the PRs one at a time through steps 3–8. Each PR's working files go in `.agent-runs/pr-<n>/` in the reviewer checkout (overwrite anything left over).
 
 ## 3. Claim it and check it out
 
@@ -58,7 +58,7 @@ If `config.standards.checker` is set, run it in the worktree and add what it rep
 ## 7. Push, then hold or merge
 
 1. New commits: `git -C <worktree> push origin HEAD:<branch>`.
-2. **Out of scope** findings (and the PR body's suggested follow-ups): each becomes an issue, `node "$NS/bin/gh.mjs" issue create -R <owner/repo> --label agent-followup`, body starting "Found reviewing #<n>." No milestone.
+2. **Out of scope** findings (and the PR body's suggested follow-ups): each becomes an issue, `node "$NS/bin/gh.mjs" issue create -R <owner/repo> --label agent-followup`, body starting "Found reviewing #<n>." and ending "nightshift builds this or closes it when its turn comes. Close it to reject it." No backticks in the body: a shell would run them. When Tier 0 gave a `followUpMilestone`, add `--milestone "<followUpMilestone>"`; when it's null, set none. Never any other milestone, and never create one. **Except** when the PR's linked issue is itself labeled `agent-followup` (`node "$NS/bin/gh.mjs" issue view <m> -R <owner/repo> --json labels`): file nothing, so follow-ups can't chain; list them in the merge body, or the hold comment, as noted and not filed.
 3. **Standards** findings: step 8.
 4. **Wait for CI:** `node "$NS/bin/gh.mjs" pr checks <n> -R <owner/repo> --watch --required`. On a failure, count earlier attempts (`git log origin/<default branch>..HEAD --grep='Local-review: ci-fix'`). Under 2: a Tier 3 subagent on the failure alone, with a `Local-review: ci-fix` trailer (an attempt with no change is committed with `--allow-empty`, so it counts); push and wait again. At 2: hold ("CI still failing after 2 fix attempts: <check>").
 5. **Hold** if anything is held: one comment listing each held finding and why, and a line listing what was dropped and why. Don't merge.
