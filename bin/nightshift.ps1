@@ -44,9 +44,16 @@ function Get-HookPath($checkout) {
   Join-Path $common 'hooks\pre-push'
 }
 function Slash($path) { $path -replace '\\', '/' }
+# Versions before 0.3.18 deferred work past peak hours with one-shot tasks, which stay in Task
+# Scheduler after they run.
+function Remove-NsDeferredTasks {
+  Get-ScheduledTask -TaskName 'nightshift deferred *' -ErrorAction SilentlyContinue |
+    Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
+}
 # The watcher: a Windows scheduled task running `tick` every 90 minutes through the launcher.
 function Register-NsWatcher {
   Install-NsLauncher
+  Remove-NsDeferredTasks
   $action = New-NsHiddenAction 'nightshift.ps1 tick'
   $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddMinutes(15) -RepetitionInterval (New-TimeSpan -Minutes 90)
   # A pass still running when the next is due makes the next one skip. WakeToRun wakes a

@@ -2,7 +2,7 @@
   "name": "nightshift",
   "private": true,
   "type": "module",
-  "description": "Off-peak builder and reviewer agents for any opted-in repo, as a Claude Code plugin.",
+  "description": "Builder and reviewer agents for any opted-in repo, as a Claude Code plugin.",
   "scripts": {
     "format": "prettier --write .",
     "format:check": "prettier --check .",
